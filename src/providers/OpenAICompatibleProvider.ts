@@ -20,6 +20,16 @@ interface OpenAIChatResponse extends OpenAIErrorResponse {
   choices?: OpenAIChoice[];
 }
 
+interface OpenAIStreamChoice {
+  delta?: {
+    content?: string;
+  };
+}
+
+interface OpenAIStreamChunk extends OpenAIErrorResponse {
+  choices?: OpenAIStreamChoice[];
+}
+
 export class OpenAICompatibleProvider implements AiProvider {
   id = "openai-compatible";
   name = "OpenAI Compatible";
@@ -35,6 +45,18 @@ export class OpenAICompatibleProvider implements AiProvider {
     return {
       content,
       raw: data
+    };
+  }
+
+  async streamChat(request: ChatRequest, onDelta: (text: string) => void): Promise<ChatResponse> {
+    const content = await this.streamChatCompletion(request, onDelta);
+
+    if (!content.trim()) {
+      throw new UserFacingError("模型返回为空。");
+    }
+
+    return {
+      content
     };
   }
 
@@ -147,6 +169,82 @@ export class OpenAICompatibleProvider implements AiProvider {
 
     return response.json;
   }
+
+  private async streamChatCompletion(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
+    const { config } = request;
+    const model = request.model.trim() || resolveModel(config);
+
+    if (!config.apiKey.trim()) {
+      throw new UserFacingError("请先配置 API Key。");
+    }
+
+    if (!model) {
+      throw new UserFacingError("请先选择或填写模型。");
+    }
+
+    if (!window.fetch || !window.ReadableStream) {
+      return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
+    }
+
+    const url = joinChatCompletionsUrl(config.baseUrl);
+    const body = {
+      model,
+      messages: request.messages,
+      temperature: request.temperature,
+      max_tokens: request.maxTokens,
+      stream: true
+    };
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), request.timeoutMs);
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey.trim()}`
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new UserFacingError(`请求失败：${text || `HTTP ${response.status}`}`, [
+          { label: "HTTP 状态", value: String(response.status) },
+          { label: "响应摘要", value: truncate(text, 2000) },
+          { label: "请求 URL", value: url },
+          { label: "模型", value: model },
+          { label: "max_tokens", value: String(request.maxTokens) },
+          { label: "stream", value: "true" }
+        ]);
+      }
+
+      if (!response.body) {
+        return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
+      }
+
+      return await readSseStream(response.body, onDelta);
+    } catch (error) {
+      if (error instanceof UserFacingError) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      throw new UserFacingError(message, [
+        { label: "请求方法", value: "POST" },
+        { label: "请求 URL", value: url },
+        { label: "模型", value: model },
+        { label: "max_tokens", value: String(request.maxTokens) },
+        { label: "stream", value: "true" },
+        { label: "请求体摘要", value: `messages=${request.messages.length}; messageChars=${countMessageCharacters(request.messages)}` },
+        { label: "原始错误", value: message }
+      ]);
+    } finally {
+      window.clearTimeout(timeoutId);
+    }
+  }
 }
 
 function resolveModel(config: ProviderConfig): string {
@@ -155,4 +253,51 @@ function resolveModel(config: ProviderConfig): string {
 
 function truncate(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
+async function readSseStream(body: ReadableStream<Uint8Array>, onDelta: (text: string) => void): Promise<string> {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split(/\r?\n/);
+    buffer = lines.pop() ?? "";
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      if (!trimmed.startsWith("data:")) {
+        continue;
+      }
+
+      const data = trimmed.slice(5).trim();
+
+      if (!data || data === "[DONE]") {
+        continue;
+      }
+
+      const chunk = JSON.parse(data) as OpenAIStreamChunk;
+      const delta = chunk.choices?.[0]?.delta?.content ?? "";
+
+      if (delta) {
+        content += delta;
+        onDelta(delta);
+      }
+    }
+  }
+
+  return content;
+}
+
+function countMessageCharacters(messages: ChatRequest["messages"]): number {
+  return messages.reduce((total, message) => total + message.content.length, 0);
 }

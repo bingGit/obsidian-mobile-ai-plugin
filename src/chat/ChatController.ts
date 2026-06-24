@@ -12,6 +12,7 @@ export interface SendInput {
   model: string;
   userInput: string;
   attachments: ContextAttachment[];
+  onDelta?: (text: string) => void;
 }
 
 export interface SendResult {
@@ -45,14 +46,21 @@ export class ChatController {
     const context = await new ContextBuilder(this.plugin.app, this.plugin.settings)
       .build(input.userInput, input.attachments);
     const provider = this.plugin.providerRegistry.createProvider(input.provider);
-    const response = await provider.sendChat({
+    const request = {
       config: input.provider,
       model: input.model,
       messages: this.buildMessages(input.session, context.prompt),
       temperature: input.provider.temperature,
       maxTokens: input.provider.maxTokens,
       timeoutMs: this.plugin.settings.requestTimeoutMs
-    });
+    };
+    const response = input.provider.stream && provider.streamChat
+      ? await provider.streamChat(request, (delta) => {
+        if (requestId === this.activeRequestId) {
+          input.onDelta?.(delta);
+        }
+      })
+      : await provider.sendChat(request);
 
     if (requestId !== this.activeRequestId) {
       throw new UserFacingError("请求已取消。");

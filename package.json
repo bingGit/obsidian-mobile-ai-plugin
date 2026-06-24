@@ -1,6 +1,6 @@
 {
   "name": "obsidian-mobile-ai-companion",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Mobile-first AI companion plugin for Obsidian with OpenAI-compatible providers and vault file context.",
   "main": "main.js",
   "scripts": {

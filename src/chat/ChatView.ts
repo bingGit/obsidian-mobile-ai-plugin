@@ -1,4 +1,4 @@
-import { ItemView, Notice, type TFile, type WorkspaceLeaf } from "obsidian";
+import { ItemView, Notice, setIcon, type TFile, type WorkspaceLeaf } from "obsidian";
 
 import type MobileAiCompanionPlugin from "../main";
 import { FileSuggest } from "../context/FileSuggest";
@@ -22,7 +22,6 @@ export class ChatView extends ItemView {
   private statusText = "";
   private statusTimerId: number | null = null;
   private requestStartedAt = 0;
-  private historyOpen = false;
 
   private providerSelectEl!: HTMLSelectElement;
   private modelSelectEl!: HTMLSelectElement;
@@ -30,8 +29,6 @@ export class ChatView extends ItemView {
   private attachmentListEl!: HTMLElement;
   private inputEl!: HTMLTextAreaElement;
   private suggestionEl!: HTMLElement;
-  private footerActionsEl!: HTMLElement;
-  private historyEl!: HTMLElement;
 
   constructor(
     leaf: WorkspaceLeaf,
@@ -120,8 +117,6 @@ export class ChatView extends ItemView {
     containerEl.addClass("mobile-ai-chat-view");
 
     this.renderHeader(containerEl);
-    this.historyEl = containerEl.createDiv("mobile-ai-history");
-    this.renderHistory();
 
     this.messageListEl = containerEl.createDiv("mobile-ai-messages");
     this.renderMessages();
@@ -147,8 +142,6 @@ export class ChatView extends ItemView {
     this.inputEl.addEventListener("click", () => this.renderSuggestions());
 
     this.renderToolbar(composerEl);
-    this.footerActionsEl = containerEl.createDiv("mobile-ai-footer-actions");
-    this.renderFooterActions();
   }
 
   private renderHeader(parentEl: HTMLElement): void {
@@ -182,18 +175,19 @@ export class ChatView extends ItemView {
     this.renderModelSelect(controlsEl);
 
     const actionsEl = headerEl.createDiv("mobile-ai-header-actions");
-    const newButton = actionsEl.createEl("button", { text: "新会话" });
+    const newButton = actionsEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "新会话",
+        title: "新会话"
+      }
+    });
+    setIcon(newButton, "plus");
     newButton.addEventListener("click", () => {
       const provider = this.getSelectedProvider() ?? this.plugin.settings.providers[0];
       this.session = this.plugin.chatStore.createSession(provider.id, provider.defaultModel);
       this.attachments = [];
       this.render();
-    });
-
-    const historyButton = actionsEl.createEl("button", { text: "历史" });
-    historyButton.addEventListener("click", () => {
-      this.historyOpen = !this.historyOpen;
-      this.renderHistory();
     });
   }
 
@@ -241,22 +235,47 @@ export class ChatView extends ItemView {
   private renderToolbar(parentEl: HTMLElement): void {
     const toolbarEl = parentEl.createDiv("mobile-ai-toolbar");
 
-    const currentButton = toolbarEl.createEl("button", { text: "当前文件" });
+    const currentButton = toolbarEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "添加当前文件",
+        title: "添加当前文件"
+      }
+    });
+    setIcon(currentButton, "file-text");
     currentButton.addEventListener("click", () => this.addCurrentFileAttachment());
 
-    const selectionButton = toolbarEl.createEl("button", { text: "选中文本" });
+    const selectionButton = toolbarEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "添加选中文本",
+        title: "添加选中文本"
+      }
+    });
+    setIcon(selectionButton, "text-select");
     selectionButton.addEventListener("click", () => this.addSelectionAttachment());
 
     const sendButton = toolbarEl.createEl("button", {
-      text: this.sending ? "发送中" : "发送",
-      cls: "mod-cta"
+      cls: "mobile-ai-icon-button mod-cta",
+      attr: {
+        "aria-label": this.sending ? "发送中" : "发送",
+        title: this.sending ? "发送中" : "发送"
+      }
     });
+    setIcon(sendButton, "send");
     sendButton.disabled = this.sending;
     sendButton.addEventListener("click", () => {
       void this.handleSend();
     });
 
-    const stopButton = toolbarEl.createEl("button", { text: "停止" });
+    const stopButton = toolbarEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "停止生成",
+        title: "停止生成"
+      }
+    });
+    setIcon(stopButton, "square");
     stopButton.disabled = !this.sending;
     stopButton.addEventListener("click", () => {
       this.controller.cancel();
@@ -299,6 +318,10 @@ export class ChatView extends ItemView {
         cls: "mobile-ai-message-content",
         text: message.content
       });
+
+      if (message.role === "assistant" && message.content) {
+        this.renderMessageActions(messageEl, message.content);
+      }
     }
 
     this.messageListEl.scrollTop = this.messageListEl.scrollHeight;
@@ -349,79 +372,56 @@ export class ChatView extends ItemView {
     }
   }
 
-  private renderFooterActions(): void {
-    this.footerActionsEl.empty();
-    const lastAssistant = [...this.ensureSession().messages].reverse().find((message) => message.role === "assistant");
+  private renderMessageActions(messageEl: HTMLElement, content: string): void {
+    const actionsEl = messageEl.createDiv("mobile-ai-message-actions");
 
-    if (!lastAssistant) {
-      return;
-    }
-
-    const copyButton = this.footerActionsEl.createEl("button", { text: "复制回答" });
+    const copyButton = actionsEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "复制这条回复",
+        title: "复制"
+      }
+    });
+    setIcon(copyButton, "copy");
     copyButton.addEventListener("click", async () => {
-      await this.editorActions.copyToClipboard(lastAssistant.content);
+      await this.editorActions.copyToClipboard(content);
     });
 
     if (!this.editorActions.hasEditor()) {
       return;
     }
 
-    const insertButton = this.footerActionsEl.createEl("button", { text: "插入光标" });
-    insertButton.addEventListener("click", () => this.runNoteAction(() => this.editorActions.insertAtCursor(lastAssistant.content)));
+    const insertButton = actionsEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "插入到当前光标",
+        title: "插入光标"
+      }
+    });
+    setIcon(insertButton, "corner-down-left");
+    insertButton.addEventListener("click", () => this.runNoteAction(() => this.editorActions.insertAtCursor(content)));
 
-    const replaceButton = this.footerActionsEl.createEl("button", { text: "替换选区" });
-    replaceButton.addEventListener("click", () => this.runNoteAction(() => this.editorActions.replaceSelection(lastAssistant.content)));
+    const replaceButton = actionsEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "替换当前选区",
+        title: "替换选区"
+      }
+    });
+    setIcon(replaceButton, "replace");
+    replaceButton.addEventListener("click", () => this.runNoteAction(() => this.editorActions.replaceSelection(content)));
 
-    const appendButton = this.footerActionsEl.createEl("button", { text: "追加末尾" });
+    const appendButton = actionsEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "追加到当前笔记末尾",
+        title: "追加末尾"
+      }
+    });
+    setIcon(appendButton, "list-plus");
     appendButton.addEventListener("click", () => {
-      void this.runAsyncNoteAction(() => this.editorActions.appendToCurrentFile(lastAssistant.content));
+      void this.runAsyncNoteAction(() => this.editorActions.appendToCurrentFile(content));
     });
-  }
-
-  private renderHistory(): void {
-    if (!this.historyEl) {
-      return;
-    }
-
-    this.historyEl.empty();
-
-    if (!this.historyOpen) {
-      this.historyEl.hide();
-      return;
-    }
-
-    this.historyEl.show();
-    const recent = this.plugin.chatStore.getRecent();
-
-    if (!recent.length) {
-      this.historyEl.createDiv({ text: "暂无历史会话" });
-      return;
-    }
-
-    const clearButton = this.historyEl.createEl("button", { text: "清空历史" });
-    clearButton.addEventListener("click", async () => {
-      await this.plugin.chatStore.clear();
-      const provider = this.getDefaultProvider() ?? this.plugin.settings.providers[0];
-      this.session = this.plugin.chatStore.createSession(provider.id, this.resolveModelForProvider(provider));
-      this.render();
-    });
-
-    for (const session of recent) {
-      const row = this.historyEl.createDiv("mobile-ai-history-row");
-      const openButton = row.createEl("button", { text: session.title });
-      openButton.addEventListener("click", () => {
-        this.session = this.hydrateSession(session);
-        this.attachments = [];
-        this.historyOpen = false;
-        this.render();
-      });
-
-      const deleteButton = row.createEl("button", { text: "删除" });
-      deleteButton.addEventListener("click", async () => {
-        await this.plugin.chatStore.deleteSession(session.id);
-        this.renderHistory();
-      });
-    }
   }
 
   private async handleSend(): Promise<void> {
@@ -441,11 +441,13 @@ export class ChatView extends ItemView {
     const model = this.resolveModelForProvider(provider, this.modelSelectEl.value || session.model);
     const attachments = [...this.attachments];
     const userMessage = createMessage("user", userInput);
+    const assistantMessage = createMessage("assistant", "");
     let inputToRestore: string | null = null;
     userMessage.attachments = attachments;
     session.providerId = provider.id;
     session.model = model;
     session.messages.push(userMessage);
+    session.messages.push(assistantMessage);
     this.sending = true;
     this.startRequestStatusTimer();
     this.render();
@@ -456,18 +458,21 @@ export class ChatView extends ItemView {
         provider,
         model,
         userInput,
-        attachments
+        attachments,
+        onDelta: (delta) => {
+          assistantMessage.content += delta;
+          this.renderMessages();
+        }
       });
       userMessage.attachments = result.resolvedAttachments;
       userMessage.warnings = result.warnings;
-      const assistantMessage = createMessage("assistant", result.content);
-      session.messages.push(assistantMessage);
+      assistantMessage.content = result.content;
       await this.plugin.chatStore.saveSession(session);
       this.inputEl.value = "";
       this.attachments = [];
       new Notice(`已发送，约 ${result.characterCount} 字符上下文。`);
     } catch (error) {
-      session.messages = session.messages.filter((message) => message.id !== userMessage.id);
+      session.messages = session.messages.filter((message) => message.id !== userMessage.id && message.id !== assistantMessage.id);
       session.messages.push(createMessage("assistant", toDebugMessage(error)));
       inputToRestore = userInput;
       new Notice(toUserMessage(error));

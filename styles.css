@@ -1,9 +1,10 @@
 .mobile-ai-chat-view {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   height: 100%;
-  padding: 10px;
+  min-height: 0;
+  padding: 6px;
 }
 
 .mobile-ai-header,
@@ -14,15 +15,18 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  flex-wrap: wrap;
 }
 
 .mobile-ai-header {
+  flex: 0 0 auto;
   justify-content: space-between;
+  gap: 6px;
 }
 
 .mobile-ai-provider-controls {
-  flex: 1 1 220px;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 6px;
 }
 
 .mobile-ai-select,
@@ -32,16 +36,20 @@
 
 .mobile-ai-select {
   min-width: 0;
-  flex: 1 1 140px;
+  flex: 1 1 0;
+  height: 34px;
+  font-size: var(--font-ui-smaller);
 }
 
 .mobile-ai-messages {
   flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  padding: 8px;
+  border: 0;
+  border-radius: 0;
+  padding: 2px 2px 8px;
   background: var(--background-primary);
+  overscroll-behavior: contain;
 }
 
 .mobile-ai-message {
@@ -66,6 +74,13 @@
   word-break: break-word;
 }
 
+.mobile-ai-message-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  margin-top: 6px;
+}
+
 .mobile-ai-message-context {
   color: var(--text-muted);
   font-size: var(--font-ui-smaller);
@@ -79,10 +94,11 @@
 }
 
 .mobile-ai-attachments {
+  flex: 0 0 auto;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  min-height: 30px;
+  min-height: 0;
   align-items: center;
 }
 
@@ -125,13 +141,15 @@
 }
 
 .mobile-ai-composer {
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .mobile-ai-input {
-  min-height: 96px;
+  min-height: 72px;
+  max-height: 30vh;
   resize: vertical;
 }
 
@@ -148,28 +166,6 @@
   justify-content: flex-start;
 }
 
-.mobile-ai-history {
-  border: 1px solid var(--background-modifier-border);
-  border-radius: 8px;
-  padding: 8px;
-  max-height: 220px;
-  overflow: auto;
-}
-
-.mobile-ai-history-row {
-  display: flex;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.mobile-ai-history-row button:first-child {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .mobile-ai-settings-note {
   color: var(--text-muted);
 }
@@ -179,4 +175,23 @@
   padding: 8px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
+}
+
+.mobile-ai-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.mobile-ai-toolbar {
+  justify-content: flex-end;
+}
+
+.mobile-ai-toolbar .mobile-ai-icon-button:nth-child(3) {
+  margin-left: auto;
 }

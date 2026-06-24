@@ -1,4 +1,4 @@
-import { Notice, Plugin, type WorkspaceLeaf } from "obsidian";
+import { Notice, Platform, Plugin, WorkspaceMobileDrawer, type WorkspaceLeaf } from "obsidian";
 
 import { ChatStore } from "./chat/ChatStore";
 import { ChatView, VIEW_TYPE_CHAT } from "./chat/ChatView";
@@ -42,7 +42,7 @@ export default class MobileAiCompanionPlugin extends Plugin {
   }
 
   async activateChatView(): Promise<ChatView | null> {
-    let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT)[0];
+    let leaf = this.getExistingChatLeaf();
 
     if (!leaf) {
       leaf = this.getPreferredLeaf();
@@ -63,6 +63,27 @@ export default class MobileAiCompanionPlugin extends Plugin {
   }
 
   private getPreferredLeaf(): WorkspaceLeaf {
+    if (Platform.isMobile || Platform.isMobileApp) {
+      return this.app.workspace.getLeaf("tab");
+    }
+
     return this.app.workspace.getRightLeaf(false) ?? this.app.workspace.getLeaf("tab");
+  }
+
+  private getExistingChatLeaf(): WorkspaceLeaf | null {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT);
+
+    if (!Platform.isMobile && !Platform.isMobileApp) {
+      return leaves[0] ?? null;
+    }
+
+    const mainLeaf = leaves.find((leaf) => !(leaf.parent instanceof WorkspaceMobileDrawer));
+
+    if (mainLeaf) {
+      return mainLeaf;
+    }
+
+    this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
+    return null;
   }
 }

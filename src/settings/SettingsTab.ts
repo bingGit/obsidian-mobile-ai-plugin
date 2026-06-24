@@ -121,7 +121,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
 
       new Setting(details)
         .setName("流式输出")
-        .setDesc("MVP 会在移动端自动降级为非流式请求。")
+        .setDesc("优先使用 OpenAI-compatible SSE 流式响应；移动端环境或中转站不支持时会降级为非流式。")
         .addToggle((toggle) => toggle
           .setValue(provider.stream)
           .onChange(async (value) => {
