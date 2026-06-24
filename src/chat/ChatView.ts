@@ -1,4 +1,4 @@
-import { ItemView, Notice, setIcon, type TFile, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, setIcon, type TFile, type WorkspaceLeaf } from "obsidian";
 
 import type MobileAiCompanionPlugin from "../main";
 import { FileSuggest } from "../context/FileSuggest";
@@ -119,7 +119,7 @@ export class ChatView extends ItemView {
     this.renderHeader(containerEl);
 
     this.messageListEl = containerEl.createDiv("mobile-ai-messages");
-    this.renderMessages();
+    void this.renderMessages();
 
     this.attachmentListEl = containerEl.createDiv("mobile-ai-attachments");
     this.renderAttachments();
@@ -285,7 +285,7 @@ export class ChatView extends ItemView {
     });
   }
 
-  private renderMessages(): void {
+  private async renderMessages(): Promise<void> {
     this.messageListEl.empty();
     const session = this.ensureSession();
 
@@ -314,10 +314,19 @@ export class ChatView extends ItemView {
         warningEl.setText(message.warnings.join(" "));
       }
 
-      messageEl.createDiv({
-        cls: "mobile-ai-message-content",
-        text: message.content
-      });
+      const contentEl = messageEl.createDiv("mobile-ai-message-content");
+
+      if (message.role === "assistant") {
+        await MarkdownRenderer.render(
+          this.app,
+          message.content || " ",
+          contentEl,
+          this.getActiveSourcePath(),
+          this
+        );
+      } else {
+        contentEl.setText(message.content);
+      }
 
       if (message.role === "assistant" && message.content) {
         this.renderMessageActions(messageEl, message.content);
@@ -424,6 +433,10 @@ export class ChatView extends ItemView {
     });
   }
 
+  private getActiveSourcePath(): string {
+    return this.app.workspace.getActiveFile()?.path ?? "";
+  }
+
   private async handleSend(): Promise<void> {
     if (this.sending) {
       return;
@@ -461,7 +474,7 @@ export class ChatView extends ItemView {
         attachments,
         onDelta: (delta) => {
           assistantMessage.content += delta;
-          this.renderMessages();
+          void this.renderMessages();
         },
         onStatus: (message) => {
           this.statusText = message;
