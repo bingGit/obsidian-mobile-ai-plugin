@@ -48,6 +48,24 @@ interface ResponsesStreamChunk extends OpenAIErrorResponse {
   type?: string;
   delta?: string;
   response?: ResponsesApiResponse;
+  text?: string;
+  item?: {
+    content?: ResponsesContentItem[];
+  };
+}
+
+interface StreamDiagnostics {
+  apiFormat: ProviderApiFormat;
+  channel: "fetch" | "XMLHttpRequest";
+  eventCount: number;
+  dataEventCount: number;
+  bytesReceived: number;
+  firstEventType: string;
+  lastEventType: string;
+  lastEventPreview: string;
+  responseStatus: string;
+  responseContentType: string;
+  responseHeaders: string;
 }
 
 export class OpenAICompatibleProvider implements AiProvider {
@@ -85,6 +103,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     };
 
     try {
+      request.onStatus?.(`正在建立 ${request.config.apiFormat === "responses" ? "Responses" : "Chat Completions"} 流式连接`);
       const content = request.config.apiFormat === "responses"
         ? await this.streamResponsesWithFetch(request, emitDelta)
         : await this.streamChatCompletionWithFetch(request, emitDelta);
@@ -347,6 +366,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     };
     const controller = new AbortController();
     const idleTimeout = createIdleTimeout(request.timeoutMs, () => controller.abort());
+    const diagnostics = createStreamDiagnostics("chat-completions", "fetch");
 
     try {
       const response = await fetch(url, {
@@ -359,6 +379,9 @@ export class OpenAICompatibleProvider implements AiProvider {
         body: JSON.stringify(body),
         signal: controller.signal
       });
+      diagnostics.responseStatus = String(response.status);
+      diagnostics.responseContentType = response.headers.get("content-type") ?? "(missing)";
+      diagnostics.responseHeaders = summarizeResponseHeaders(response.headers);
 
       if (!response.ok) {
         const text = await response.text();
@@ -368,7 +391,8 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "请求 URL", value: url },
           { label: "模型", value: model },
           { label: "max_tokens", value: String(request.maxTokens) },
-          { label: "stream", value: "true" }
+          { label: "stream", value: "true" },
+          ...buildStreamDebugDetails(diagnostics)
         ]);
       }
 
@@ -376,12 +400,12 @@ export class OpenAICompatibleProvider implements AiProvider {
         return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
       }
 
-      return await readSseStream(response.body, (chunk) => parseChatCompletionsStreamChunk(chunk, onDelta), () => {
+      return await readSseStream(response.body, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta), () => {
         idleTimeout.bump();
       });
     } catch (error) {
       if (error instanceof UserFacingError) {
-        throw error;
+        throw appendDebugDetails(error, buildStreamDebugDetails(diagnostics));
       }
 
       const message = error instanceof Error ? error.message : String(error);
@@ -392,7 +416,8 @@ export class OpenAICompatibleProvider implements AiProvider {
         { label: "max_tokens", value: String(request.maxTokens) },
         { label: "stream", value: "true" },
         { label: "请求体摘要", value: `messages=${request.messages.length}; messageChars=${countMessageCharacters(request.messages)}` },
-        { label: "原始错误", value: message }
+        { label: "原始错误", value: message },
+        ...buildStreamDebugDetails(diagnostics)
       ]);
     } finally {
       idleTimeout.clear();
@@ -418,6 +443,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     const url = joinModelApiUrl(config.baseUrl, "responses");
     const controller = new AbortController();
     const idleTimeout = createIdleTimeout(request.timeoutMs, () => controller.abort());
+    const diagnostics = createStreamDiagnostics("responses", "fetch");
 
     try {
       const response = await fetch(url, {
@@ -430,6 +456,9 @@ export class OpenAICompatibleProvider implements AiProvider {
         body: JSON.stringify(buildResponsesBody(request, true)),
         signal: controller.signal
       });
+      diagnostics.responseStatus = String(response.status);
+      diagnostics.responseContentType = response.headers.get("content-type") ?? "(missing)";
+      diagnostics.responseHeaders = summarizeResponseHeaders(response.headers);
 
       if (!response.ok) {
         const text = await response.text();
@@ -439,7 +468,8 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "请求 URL", value: url },
           { label: "模型", value: model },
           { label: "max_output_tokens", value: String(request.maxTokens) },
-          { label: "stream", value: "true" }
+          { label: "stream", value: "true" },
+          ...buildStreamDebugDetails(diagnostics)
         ]);
       }
 
@@ -447,12 +477,12 @@ export class OpenAICompatibleProvider implements AiProvider {
         return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
       }
 
-      return await readSseStream(response.body, (chunk) => parseResponsesStreamChunk(chunk, onDelta), () => {
+      return await readSseStream(response.body, diagnostics, (event) => parseResponsesStreamEvent(event, onDelta), () => {
         idleTimeout.bump();
       });
     } catch (error) {
       if (error instanceof UserFacingError) {
-        throw error;
+        throw appendDebugDetails(error, buildStreamDebugDetails(diagnostics));
       }
 
       const message = error instanceof Error ? error.message : String(error);
@@ -463,7 +493,8 @@ export class OpenAICompatibleProvider implements AiProvider {
         { label: "max_output_tokens", value: String(request.maxTokens) },
         { label: "stream", value: "true" },
         { label: "请求体摘要", value: `messages=${request.messages.length}; messageChars=${countMessageCharacters(request.messages)}` },
-        { label: "原始错误", value: message }
+        { label: "原始错误", value: message },
+        ...buildStreamDebugDetails(diagnostics)
       ]);
     } finally {
       idleTimeout.clear();
@@ -490,6 +521,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       max_tokens: request.maxTokens,
       stream: true
     };
+    const diagnostics = createStreamDiagnostics("chat-completions", "XMLHttpRequest");
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -504,7 +536,8 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "模型", value: model },
           { label: "max_tokens", value: String(request.maxTokens) },
           { label: "stream", value: "true" },
-          { label: "流式通道", value: "XMLHttpRequest" }
+          { label: "流式通道", value: "XMLHttpRequest" },
+          ...buildStreamDebugDetails(diagnostics)
         ]));
       });
 
@@ -515,9 +548,12 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       xhr.onprogress = () => {
         idleTimeout.bump();
+        diagnostics.responseStatus = xhr.status ? String(xhr.status) : diagnostics.responseStatus;
+        diagnostics.responseHeaders = summarizeRawResponseHeaders(xhr.getAllResponseHeaders());
+        diagnostics.responseContentType = xhr.getResponseHeader("content-type") ?? diagnostics.responseContentType;
         const nextText = xhr.responseText.slice(seenLength);
         seenLength = xhr.responseText.length;
-        const result = readSseText(nextText, buffer, (chunk) => parseChatCompletionsStreamChunk(chunk, onDelta));
+        const result = readSseText(nextText, buffer, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta));
         buffer = result.buffer;
         content += result.content;
       };
@@ -533,13 +569,14 @@ export class OpenAICompatibleProvider implements AiProvider {
             { label: "模型", value: model },
             { label: "max_tokens", value: String(request.maxTokens) },
             { label: "stream", value: "true" },
-            { label: "流式通道", value: "XMLHttpRequest" }
+            { label: "流式通道", value: "XMLHttpRequest" },
+            ...buildStreamDebugDetails(diagnostics)
           ]));
           return;
         }
 
         if (buffer) {
-          const result = readSseText("\n", buffer, (chunk) => parseChatCompletionsStreamChunk(chunk, onDelta));
+          const result = readSseText("\n\n", buffer, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta));
           content += result.content;
         }
 
@@ -555,7 +592,8 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "max_tokens", value: String(request.maxTokens) },
           { label: "stream", value: "true" },
           { label: "流式通道", value: "XMLHttpRequest" },
-          { label: "原始错误", value: "xhr.onerror" }
+          { label: "原始错误", value: "xhr.onerror" },
+          ...buildStreamDebugDetails(diagnostics)
         ]));
       };
 
@@ -567,7 +605,8 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "模型", value: model },
           { label: "max_tokens", value: String(request.maxTokens) },
           { label: "stream", value: "true" },
-          { label: "流式通道", value: "XMLHttpRequest" }
+          { label: "流式通道", value: "XMLHttpRequest" },
+          ...buildStreamDebugDetails(diagnostics)
         ]));
       };
 
@@ -588,6 +627,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
 
     const url = joinModelApiUrl(config.baseUrl, "responses");
+    const diagnostics = createStreamDiagnostics("responses", "XMLHttpRequest");
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
@@ -602,7 +642,8 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "模型", value: model },
           { label: "max_output_tokens", value: String(request.maxTokens) },
           { label: "stream", value: "true" },
-          { label: "流式通道", value: "XMLHttpRequest" }
+          { label: "流式通道", value: "XMLHttpRequest" },
+          ...buildStreamDebugDetails(diagnostics)
         ]));
       });
 
@@ -613,9 +654,12 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       xhr.onprogress = () => {
         idleTimeout.bump();
+        diagnostics.responseStatus = xhr.status ? String(xhr.status) : diagnostics.responseStatus;
+        diagnostics.responseHeaders = summarizeRawResponseHeaders(xhr.getAllResponseHeaders());
+        diagnostics.responseContentType = xhr.getResponseHeader("content-type") ?? diagnostics.responseContentType;
         const nextText = xhr.responseText.slice(seenLength);
         seenLength = xhr.responseText.length;
-        const result = readSseText(nextText, buffer, (chunk) => parseResponsesStreamChunk(chunk, onDelta));
+        const result = readSseText(nextText, buffer, diagnostics, (event) => parseResponsesStreamEvent(event, onDelta));
         buffer = result.buffer;
         content += result.content;
       };
@@ -631,13 +675,14 @@ export class OpenAICompatibleProvider implements AiProvider {
             { label: "模型", value: model },
             { label: "max_output_tokens", value: String(request.maxTokens) },
             { label: "stream", value: "true" },
-            { label: "流式通道", value: "XMLHttpRequest" }
+            { label: "流式通道", value: "XMLHttpRequest" },
+            ...buildStreamDebugDetails(diagnostics)
           ]));
           return;
         }
 
         if (buffer) {
-          const result = readSseText("\n", buffer, (chunk) => parseResponsesStreamChunk(chunk, onDelta));
+          const result = readSseText("\n\n", buffer, diagnostics, (event) => parseResponsesStreamEvent(event, onDelta));
           content += result.content;
         }
 
@@ -653,7 +698,8 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "max_output_tokens", value: String(request.maxTokens) },
           { label: "stream", value: "true" },
           { label: "流式通道", value: "XMLHttpRequest" },
-          { label: "原始错误", value: "xhr.onerror" }
+          { label: "原始错误", value: "xhr.onerror" },
+          ...buildStreamDebugDetails(diagnostics)
         ]));
       };
 
@@ -665,7 +711,8 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "模型", value: model },
           { label: "max_output_tokens", value: String(request.maxTokens) },
           { label: "stream", value: "true" },
-          { label: "流式通道", value: "XMLHttpRequest" }
+          { label: "流式通道", value: "XMLHttpRequest" },
+          ...buildStreamDebugDetails(diagnostics)
         ]));
       };
 
@@ -684,7 +731,8 @@ function truncate(value: string, maxLength: number): string {
 
 async function readSseStream(
   body: ReadableStream<Uint8Array>,
-  parseChunk: (chunk: string) => string,
+  diagnostics: StreamDiagnostics,
+  parseEvent: (event: SseEvent) => string,
   onActivity: () => void
 ): Promise<string> {
   const reader = body.getReader();
@@ -699,7 +747,9 @@ async function readSseStream(
       break;
     }
 
-    const result = readSseText(decoder.decode(value, { stream: true }), buffer, parseChunk);
+    const chunkText = decoder.decode(value, { stream: true });
+    diagnostics.bytesReceived += chunkText.length;
+    const result = readSseText(chunkText, buffer, diagnostics, parseEvent);
     buffer = result.buffer;
     content += result.content;
     onActivity();
@@ -711,26 +761,29 @@ async function readSseStream(
 function readSseText(
   text: string,
   previousBuffer: string,
-  parseChunk: (chunk: string) => string
+  diagnostics: StreamDiagnostics,
+  parseEvent: (event: SseEvent) => string
 ): { buffer: string; content: string } {
   let content = "";
-  const lines = `${previousBuffer}${text}`.split(/\r?\n/);
-  const buffer = lines.pop() ?? "";
+  const raw = `${previousBuffer}${text}`;
+  const normalized = raw.replace(/\r\n/g, "\n");
+  const chunks = normalized.split("\n\n");
+  const buffer = chunks.pop() ?? "";
 
-  for (const line of lines) {
-    const trimmed = line.trim();
+  for (const chunkText of chunks) {
+    const event = parseSseEvent(chunkText);
 
-    if (!trimmed.startsWith("data:")) {
+    if (!event || !event.data || event.data === "[DONE]") {
       continue;
     }
 
-    const data = trimmed.slice(5).trim();
+    diagnostics.eventCount += 1;
+    diagnostics.dataEventCount += 1;
+    diagnostics.firstEventType = diagnostics.firstEventType || event.event;
+    diagnostics.lastEventType = event.event;
+    diagnostics.lastEventPreview = truncate(event.data, 160);
 
-    if (!data || data === "[DONE]") {
-      continue;
-    }
-
-    const delta = parseChunk(data);
+    const delta = parseEvent(event);
 
     if (delta) {
       content += delta;
@@ -743,8 +796,43 @@ function readSseText(
   };
 }
 
-function parseChatCompletionsStreamChunk(data: string, onDelta: (text: string) => void): string {
-  const chunk = JSON.parse(data) as OpenAIStreamChunk;
+interface SseEvent {
+  event: string;
+  data: string;
+}
+
+function parseSseEvent(chunkText: string): SseEvent | null {
+  const lines = chunkText.split("\n");
+  let event = "message";
+  const dataLines: string[] = [];
+
+  for (const line of lines) {
+    if (!line || line.startsWith(":")) {
+      continue;
+    }
+
+    if (line.startsWith("event:")) {
+      event = line.slice(6).trim() || "message";
+      continue;
+    }
+
+    if (line.startsWith("data:")) {
+      dataLines.push(line.slice(5).trimStart());
+    }
+  }
+
+  if (!dataLines.length) {
+    return null;
+  }
+
+  return {
+    event,
+    data: dataLines.join("\n")
+  };
+}
+
+function parseChatCompletionsStreamEvent(event: SseEvent, onDelta: (text: string) => void): string {
+  const chunk = JSON.parse(event.data) as OpenAIStreamChunk;
   const delta = chunk.choices?.[0]?.delta?.content ?? "";
 
   if (delta) {
@@ -754,19 +842,22 @@ function parseChatCompletionsStreamChunk(data: string, onDelta: (text: string) =
   return delta;
 }
 
-function parseResponsesStreamChunk(data: string, onDelta: (text: string) => void): string {
-  const chunk = JSON.parse(data) as ResponsesStreamChunk;
+function parseResponsesStreamEvent(event: SseEvent, onDelta: (text: string) => void): string {
+  const chunk = JSON.parse(event.data) as ResponsesStreamChunk;
 
   if (chunk.error?.message) {
     throw new UserFacingError(`请求失败：${chunk.error.message}`);
   }
 
-  if (chunk.type === "response.output_text.delta" && typeof chunk.delta === "string") {
-    onDelta(chunk.delta);
-    return chunk.delta;
+  const eventType = chunk.type || event.event;
+  const delta = extractResponsesStreamDelta(chunk, eventType);
+
+  if (delta) {
+    onDelta(delta);
+    return delta;
   }
 
-  if (chunk.type === "response.completed" && chunk.response) {
+  if ((eventType === "response.completed" || eventType === "response.output_text.done") && chunk.response) {
     return "";
   }
 
@@ -843,8 +934,85 @@ function shouldFallbackToNonStreaming(error: unknown): boolean {
   const message = error.message.toLowerCase();
 
   return message.includes("failed to fetch")
+    || message.includes("xmlhttprequest")
+    || message.includes("xhr.onerror")
     || message.includes("networkerror")
     || message.includes("load failed")
     || message.includes("cors")
-    || message.includes("abort");
+    || message.includes("abort")
+    || message.includes("network request failed");
+}
+
+function extractResponsesStreamDelta(chunk: ResponsesStreamChunk, eventType: string): string {
+  if ((eventType === "response.output_text.delta" || eventType === "output_text.delta") && typeof chunk.delta === "string") {
+    return chunk.delta;
+  }
+
+  if ((eventType === "response.output_text.done" || eventType === "output_text.done") && typeof chunk.text === "string") {
+    return chunk.text;
+  }
+
+  const itemText = chunk.item?.content
+    ?.filter((item) => item.type === "output_text" && typeof item.text === "string")
+    .map((item) => item.text ?? "")
+    .join("") ?? "";
+
+  if (itemText) {
+    return itemText;
+  }
+
+  return "";
+}
+
+function createStreamDiagnostics(apiFormat: ProviderApiFormat, channel: "fetch" | "XMLHttpRequest"): StreamDiagnostics {
+  return {
+    apiFormat,
+    channel,
+    eventCount: 0,
+    dataEventCount: 0,
+    bytesReceived: 0,
+    firstEventType: "(none)",
+    lastEventType: "(none)",
+    lastEventPreview: "(none)",
+    responseStatus: "(unknown)",
+    responseContentType: "(unknown)",
+    responseHeaders: "(unavailable)"
+  };
+}
+
+function buildStreamDebugDetails(diagnostics: StreamDiagnostics) {
+  return [
+    { label: "接口格式", value: diagnostics.apiFormat },
+    { label: "流式通道", value: diagnostics.channel },
+    { label: "流式状态码", value: diagnostics.responseStatus },
+    { label: "流式 Content-Type", value: diagnostics.responseContentType },
+    { label: "流式响应头", value: diagnostics.responseHeaders },
+    { label: "流式事件数", value: String(diagnostics.eventCount) },
+    { label: "流式数据块数", value: String(diagnostics.dataEventCount) },
+    { label: "已收字节", value: String(diagnostics.bytesReceived) },
+    { label: "首个事件", value: diagnostics.firstEventType },
+    { label: "最后事件", value: diagnostics.lastEventType },
+    { label: "最后事件摘要", value: diagnostics.lastEventPreview }
+  ];
+}
+
+function summarizeResponseHeaders(headers: Headers): string {
+  const values: string[] = [];
+
+  headers.forEach((value, key) => {
+    values.push(`${key}=${value}`);
+  });
+
+  return values.length ? values.join("; ") : "(empty)";
+}
+
+function summarizeRawResponseHeaders(rawHeaders: string): string {
+  const normalized = rawHeaders
+    .trim()
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("; ");
+
+  return normalized || "(empty)";
 }
