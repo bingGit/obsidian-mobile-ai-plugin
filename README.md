@@ -20,7 +20,8 @@ This repo now includes a minimal `WebSocket bridge` skeleton so the plugin can f
 References:
 
 - protocol: [docs/websocket-bridge-protocol.md](docs/websocket-bridge-protocol.md)
-- server skeleton: [docs/websocket-bridge-minimal-server.js](docs/websocket-bridge-minimal-server.js)
+- runnable bridge: [bridge/server.js](bridge/server.js)
+- bridge setup notes: [bridge/README.md](bridge/README.md)
 
 ## Development
 

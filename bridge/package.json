@@ -1,0 +1,13 @@
+{
+  "name": "mobile-ai-companion-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Minimal WebSocket streaming bridge for Obsidian Mobile AI Companion.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
