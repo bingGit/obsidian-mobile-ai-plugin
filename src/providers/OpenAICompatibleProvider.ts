@@ -122,44 +122,30 @@ export class OpenAICompatibleProvider implements AiProvider {
           content: emittedContent
         };
       }
+      request.onStatus?.("fetch 流式连接失败，正在尝试 XHR 流式通道");
 
-      if (shouldFallbackToNonStreaming(error)) {
-        request.onStatus?.("fetch 流式连接不可用，正在尝试 XHR 流式通道");
+      try {
+        const xhrContent = request.config.apiFormat === "responses"
+          ? await this.streamResponsesWithXhr(request, emitDelta)
+          : await this.streamChatCompletionWithXhr(request, emitDelta);
 
-        try {
-          const xhrContent = request.config.apiFormat === "responses"
-            ? await this.streamResponsesWithXhr(request, emitDelta)
-            : await this.streamChatCompletionWithXhr(request, emitDelta);
-
-          if (xhrContent.trim()) {
-            return {
-              content: xhrContent
-            };
-          }
-        } catch (xhrError) {
-          if (emittedContent.trim()) {
-            request.onStatus?.("XHR 流式连接中断，已保留已收到内容");
-            return {
-              content: emittedContent
-            };
-          }
-
-          if (!shouldFallbackToNonStreaming(xhrError)) {
-            throw xhrError;
-          }
+        if (!xhrContent.trim()) {
+          throw new UserFacingError("流式通道已建立，但没有收到可用内容。");
         }
 
-        request.onStatus?.("流式通道不可用，已自动降级为非流式请求");
-        return this.sendChat({
-          ...request,
-          config: {
-            ...request.config,
-            stream: false
-          }
-        });
-      }
+        return {
+          content: xhrContent
+        };
+      } catch (xhrError) {
+        if (emittedContent.trim()) {
+          request.onStatus?.("XHR 流式连接中断，已保留已收到内容");
+          return {
+            content: emittedContent
+          };
+        }
 
-      throw error;
+        throw combineStreamErrors(error, xhrError);
+      }
     }
   }
 
@@ -353,7 +339,12 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
 
     if (!window.fetch || !window.ReadableStream) {
-      return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
+      throw new UserFacingError("当前移动端环境不支持 fetch 可读流。", [
+        { label: "接口格式", value: "chat-completions" },
+        { label: "流式通道", value: "fetch" },
+        { label: "fetch 可用", value: String(Boolean(window.fetch)) },
+        { label: "ReadableStream 可用", value: String(Boolean(window.ReadableStream)) }
+      ]);
     }
 
     const url = joinModelApiUrl(config.baseUrl, "chat-completions");
@@ -397,12 +388,11 @@ export class OpenAICompatibleProvider implements AiProvider {
       }
 
       if (!response.body) {
-        return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
+        throw new UserFacingError("fetch 已返回响应，但没有提供可读流 body。", buildStreamDebugDetails(diagnostics));
       }
 
       if (looksLikeJsonResponse(diagnostics.responseContentType)) {
-        const text = await response.text();
-        return extractChatCompletionTextFromJson(text);
+        throw new UserFacingError("流式请求返回了 JSON，而不是事件流。", buildStreamDebugDetails(diagnostics));
       }
 
       return await readSseStream(response.body, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta), () => {
@@ -442,7 +432,12 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
 
     if (!window.fetch || !window.ReadableStream) {
-      return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
+      throw new UserFacingError("当前移动端环境不支持 fetch 可读流。", [
+        { label: "接口格式", value: "responses" },
+        { label: "流式通道", value: "fetch" },
+        { label: "fetch 可用", value: String(Boolean(window.fetch)) },
+        { label: "ReadableStream 可用", value: String(Boolean(window.ReadableStream)) }
+      ]);
     }
 
     const url = joinModelApiUrl(config.baseUrl, "responses");
@@ -479,12 +474,11 @@ export class OpenAICompatibleProvider implements AiProvider {
       }
 
       if (!response.body) {
-        return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
+        throw new UserFacingError("fetch 已返回响应，但没有提供可读流 body。", buildStreamDebugDetails(diagnostics));
       }
 
       if (looksLikeJsonResponse(diagnostics.responseContentType)) {
-        const text = await response.text();
-        return extractResponsesTextFromJson(text);
+        throw new UserFacingError("流式请求返回了 JSON，而不是事件流。", buildStreamDebugDetails(diagnostics));
       }
 
       return await readSseStream(response.body, diagnostics, (event) => parseResponsesStreamEvent(event, onDelta), () => {
@@ -591,13 +585,8 @@ export class OpenAICompatibleProvider implements AiProvider {
         }
 
         if (!content.trim() && looksLikeJsonResponse(diagnostics.responseContentType)) {
-          try {
-            resolve(extractChatCompletionTextFromJson(xhr.responseText));
-            return;
-          } catch (error) {
-            reject(appendDebugDetails(error, buildStreamDebugDetails(diagnostics)));
-            return;
-          }
+          reject(new UserFacingError("XHR 流式请求返回了 JSON，而不是事件流。", buildStreamDebugDetails(diagnostics)));
+          return;
         }
 
         resolve(content);
@@ -707,13 +696,8 @@ export class OpenAICompatibleProvider implements AiProvider {
         }
 
         if (!content.trim() && looksLikeJsonResponse(diagnostics.responseContentType)) {
-          try {
-            resolve(extractResponsesTextFromJson(xhr.responseText));
-            return;
-          } catch (error) {
-            reject(appendDebugDetails(error, buildStreamDebugDetails(diagnostics)));
-            return;
-          }
+          reject(new UserFacingError("XHR 流式请求返回了 JSON，而不是事件流。", buildStreamDebugDetails(diagnostics)));
+          return;
         }
 
         resolve(content);
@@ -903,32 +887,6 @@ function extractResponsesText(response: ResponsesApiResponse): string {
     .join("");
 }
 
-function extractChatCompletionTextFromJson(text: string): string {
-  const response = JSON.parse(text) as OpenAIChatResponse;
-  const content = response.choices?.[0]?.message?.content?.trim();
-
-  if (!content) {
-    throw new UserFacingError("流式请求返回了 JSON，但内容为空。", [
-      { label: "响应摘要", value: truncate(text, 1000) }
-    ]);
-  }
-
-  return content;
-}
-
-function extractResponsesTextFromJson(text: string): string {
-  const response = JSON.parse(text) as ResponsesApiResponse;
-  const content = extractResponsesText(response).trim();
-
-  if (!content) {
-    throw new UserFacingError("流式请求返回了 JSON，但内容为空。", [
-      { label: "响应摘要", value: truncate(text, 1000) }
-    ]);
-  }
-
-  return content;
-}
-
 function buildResponsesBody(request: ChatRequest, stream: boolean): Record<string, unknown> {
   const instructions = request.messages
     .filter((message) => message.role === "system")
@@ -1075,4 +1033,14 @@ function summarizeRawResponseHeaders(rawHeaders: string): string {
 
 function looksLikeJsonResponse(contentType: string): boolean {
   return contentType.toLowerCase().includes("application/json");
+}
+
+function combineStreamErrors(fetchError: unknown, xhrError: unknown): Error {
+  const primary = appendDebugDetails(fetchError, [
+    { label: "fetch 通道结果", value: "失败" }
+  ]);
+
+  return appendDebugDetails(primary, [
+    { label: "XHR 通道结果", value: xhrError instanceof Error ? xhrError.message : String(xhrError) }
+  ]);
 }

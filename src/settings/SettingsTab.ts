@@ -134,7 +134,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
 
       new Setting(details)
         .setName("流式输出")
-        .setDesc("优先使用 OpenAI-compatible SSE 流式响应；移动端环境或中转站不支持时会降级为非流式。")
+        .setDesc("只走流式通道；若移动端环境或中转站不支持，将直接报错并输出调试信息。")
         .addToggle((toggle) => toggle
           .setValue(provider.stream)
           .onChange(async (value) => {
