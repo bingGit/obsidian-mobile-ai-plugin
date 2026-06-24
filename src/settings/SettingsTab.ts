@@ -1,6 +1,7 @@
 import { Notice, PluginSettingTab, Setting } from "obsidian";
 
 import type MobileAiCompanionPlugin from "../main";
+import { toDebugMessage } from "../utils/errors";
 import { createProviderConfig, type ProviderConfig } from "./types";
 
 export class MobileAiSettingsTab extends PluginSettingTab {
@@ -174,6 +175,16 @@ export class MobileAiSettingsTab extends PluginSettingTab {
             button.setButtonText("测试真实请求");
           }))
         .addButton((button) => button
+          .setButtonText("测试流式")
+          .onClick(async () => {
+            button.setDisabled(true);
+            button.setButtonText("测试中...");
+            const message = await this.testStreamingRequest(provider);
+            new Notice(message, 15000);
+            button.setDisabled(false);
+            button.setButtonText("测试流式");
+          }))
+        .addButton((button) => button
           .setButtonText("删除")
           .setWarning()
           .onClick(async () => {
@@ -290,6 +301,52 @@ export class MobileAiSettingsTab extends PluginSettingTab {
       return `真实请求成功，用时 ${elapsedSeconds} 秒。返回：${response.content.slice(0, 80)}`;
     } catch (error) {
       return error instanceof Error ? `真实请求失败：${error.message}` : "真实请求失败。";
+    }
+  }
+
+  private async testStreamingRequest(provider: ProviderConfig): Promise<string> {
+    const model = provider.defaultModel || provider.models.find(Boolean) || "";
+
+    if (!model) {
+      return "请先填写模型名。";
+    }
+
+    const instance = this.mobilePlugin.providerRegistry.createProvider(provider);
+
+    if (!instance.streamChat) {
+      return "当前 Provider 不支持流式测试。";
+    }
+
+    const statuses: string[] = [];
+
+    try {
+      const startedAt = Date.now();
+      const response = await instance.streamChat({
+        config: {
+          ...provider,
+          stream: true
+        },
+        model,
+        messages: [
+          {
+            role: "user",
+            content: "请分两小段输出一句简短中文，用于测试移动端流式通道。"
+          }
+        ],
+        temperature: provider.temperature,
+        maxTokens: Math.min(provider.maxTokens, 256),
+        timeoutMs: this.mobilePlugin.settings.requestTimeoutMs,
+        onStatus: (message) => {
+          statuses.push(message);
+        }
+      }, () => undefined);
+      const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
+      const statusText = statuses.length ? `；状态：${statuses.join(" -> ")}` : "";
+
+      return `流式测试成功，用时 ${elapsedSeconds} 秒${statusText}；返回：${response.content.slice(0, 80)}`;
+    } catch (error) {
+      const statusText = statuses.length ? `\n\n状态流转：${statuses.join(" -> ")}` : "";
+      return `流式测试失败：\n${toDebugMessage(error)}${statusText}`;
     }
   }
 }
