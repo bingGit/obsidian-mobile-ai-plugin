@@ -1,0 +1,25 @@
+{
+  "name": "obsidian-mobile-ai-companion",
+  "version": "0.1.0",
+  "description": "Mobile-first AI companion plugin for Obsidian with OpenAI-compatible providers and vault file context.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production"
+  },
+  "keywords": [
+    "obsidian",
+    "plugin",
+    "mobile",
+    "ai"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "builtin-modules": "^3.3.0",
+    "esbuild": "^0.20.2",
+    "obsidian": "^1.5.12",
+    "typescript": "^5.4.2"
+  }
+}
