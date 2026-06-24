@@ -60,9 +60,13 @@ interface StreamDiagnostics {
   eventCount: number;
   dataEventCount: number;
   bytesReceived: number;
+  rawChunkCount: number;
   firstEventType: string;
   lastEventType: string;
   lastEventPreview: string;
+  firstChunkPreview: string;
+  lastChunkPreview: string;
+  trailingBufferPreview: string;
   responseStatus: string;
   responseContentType: string;
   responseHeaders: string;
@@ -534,7 +538,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       let seenLength = 0;
       const idleTimeout = createIdleTimeout(request.timeoutMs, () => {
         xhr.abort();
-        reject(new UserFacingError(`流式请求超过 ${request.timeoutMs} 毫秒仍未完成。`, [
+        reject(new UserFacingError(buildIdleTimeoutMessage(request.timeoutMs, diagnostics), [
           { label: "请求方法", value: "POST" },
           { label: "请求 URL", value: url },
           { label: "模型", value: model },
@@ -645,7 +649,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       let seenLength = 0;
       const idleTimeout = createIdleTimeout(request.timeoutMs, () => {
         xhr.abort();
-        reject(new UserFacingError(`流式请求超过 ${request.timeoutMs} 毫秒仍未完成。`, [
+        reject(new UserFacingError(buildIdleTimeoutMessage(request.timeoutMs, diagnostics), [
           { label: "请求方法", value: "POST" },
           { label: "请求 URL", value: url },
           { label: "模型", value: model },
@@ -763,8 +767,14 @@ async function readSseStream(
 
     const chunkText = decoder.decode(value, { stream: true });
     diagnostics.bytesReceived += chunkText.length;
+    diagnostics.rawChunkCount += 1;
+    if (diagnostics.firstChunkPreview === "(none)") {
+      diagnostics.firstChunkPreview = truncate(chunkText, 160);
+    }
+    diagnostics.lastChunkPreview = truncate(chunkText, 160);
     const result = readSseText(chunkText, buffer, diagnostics, parseEvent);
     buffer = result.buffer;
+    diagnostics.trailingBufferPreview = truncate(buffer, 160);
     content += result.content;
     onActivity();
   }
@@ -783,6 +793,7 @@ function readSseText(
   const normalized = raw.replace(/\r\n/g, "\n");
   const chunks = normalized.split("\n\n");
   const buffer = chunks.pop() ?? "";
+  diagnostics.trailingBufferPreview = truncate(buffer, 160);
 
   for (const chunkText of chunks) {
     const event = parseSseEvent(chunkText);
@@ -985,9 +996,13 @@ function createStreamDiagnostics(apiFormat: ProviderApiFormat, channel: "fetch" 
     eventCount: 0,
     dataEventCount: 0,
     bytesReceived: 0,
+    rawChunkCount: 0,
     firstEventType: "(none)",
     lastEventType: "(none)",
     lastEventPreview: "(none)",
+    firstChunkPreview: "(none)",
+    lastChunkPreview: "(none)",
+    trailingBufferPreview: "(none)",
     responseStatus: "(unknown)",
     responseContentType: "(unknown)",
     responseHeaders: "(unavailable)"
@@ -1004,9 +1019,13 @@ function buildStreamDebugDetails(diagnostics: StreamDiagnostics) {
     { label: "流式事件数", value: String(diagnostics.eventCount) },
     { label: "流式数据块数", value: String(diagnostics.dataEventCount) },
     { label: "已收字节", value: String(diagnostics.bytesReceived) },
+    { label: "原始块数", value: String(diagnostics.rawChunkCount) },
     { label: "首个事件", value: diagnostics.firstEventType },
     { label: "最后事件", value: diagnostics.lastEventType },
-    { label: "最后事件摘要", value: diagnostics.lastEventPreview }
+    { label: "最后事件摘要", value: diagnostics.lastEventPreview },
+    { label: "首块摘要", value: diagnostics.firstChunkPreview },
+    { label: "末块摘要", value: diagnostics.lastChunkPreview },
+    { label: "尾部缓冲摘要", value: diagnostics.trailingBufferPreview }
   ];
 }
 
@@ -1043,4 +1062,16 @@ function combineStreamErrors(fetchError: unknown, xhrError: unknown): Error {
   return appendDebugDetails(primary, [
     { label: "XHR 通道结果", value: xhrError instanceof Error ? xhrError.message : String(xhrError) }
   ]);
+}
+
+function buildIdleTimeoutMessage(timeoutMs: number, diagnostics: StreamDiagnostics): string {
+  if (diagnostics.bytesReceived > 0 && diagnostics.eventCount === 0) {
+    return `流式请求超过 ${timeoutMs} 毫秒仍未完成；已收到原始数据，但还没有解析出 SSE 事件。`;
+  }
+
+  if (diagnostics.eventCount > 0) {
+    return `流式请求超过 ${timeoutMs} 毫秒仍未完成；已收到部分流式事件，但连接没有正常结束。`;
+  }
+
+  return `流式请求超过 ${timeoutMs} 毫秒仍未完成。`;
 }
