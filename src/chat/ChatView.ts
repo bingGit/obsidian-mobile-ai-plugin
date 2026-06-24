@@ -95,16 +95,17 @@ export class ChatView extends ItemView {
 
   private ensureSession(): ChatSession {
     if (this.session) {
+      this.hydrateSession(this.session);
       return this.session;
     }
 
-    const defaultProvider = this.getSelectedProvider() ?? this.plugin.settings.providers[0];
+    const defaultProvider = this.getDefaultProvider() ?? this.plugin.settings.providers[0];
     const recent = this.plugin.chatStore.getMostRecent();
 
-    this.session = recent ?? this.plugin.chatStore.createSession(
+    this.session = this.hydrateSession(recent ?? this.plugin.chatStore.createSession(
       defaultProvider.id,
-      defaultProvider.defaultModel
-    );
+      this.resolveModelForProvider(defaultProvider)
+    ));
 
     return this.session;
   }
@@ -143,6 +144,7 @@ export class ChatView extends ItemView {
   }
 
   private renderHeader(parentEl: HTMLElement): void {
+    const session = this.ensureSession();
     const headerEl = parentEl.createDiv("mobile-ai-header");
     const controlsEl = headerEl.createDiv("mobile-ai-provider-controls");
 
@@ -153,18 +155,18 @@ export class ChatView extends ItemView {
         text: provider.name || "OpenAI Compatible",
         value: provider.id
       });
-      option.selected = provider.id === this.ensureSession().providerId;
+      option.selected = provider.id === session.providerId;
     }
 
     this.providerSelectEl.addEventListener("change", () => {
-      const provider = this.getSelectedProvider();
+      const provider = this.getConfiguredProviderById(this.providerSelectEl.value);
 
       if (!provider || !this.session) {
         return;
       }
 
       this.session.providerId = provider.id;
-      this.session.model = provider.defaultModel;
+      this.session.model = this.resolveModelForProvider(provider);
       this.renderModelSelect(controlsEl);
     });
 
@@ -195,7 +197,14 @@ export class ChatView extends ItemView {
       return;
     }
 
-    const models = unique([provider.defaultModel, ...provider.models].filter(Boolean));
+    const currentModel = this.resolveModelForProvider(provider, this.session.model);
+    const models = unique([currentModel, ...this.getProviderModels(provider)].filter(Boolean));
+    this.session.providerId = provider.id;
+    this.session.model = currentModel;
+
+    if (this.providerSelectEl.value !== provider.id) {
+      this.providerSelectEl.value = provider.id;
+    }
 
     if (!models.length) {
       this.modelSelectEl.createEl("option", {
@@ -207,7 +216,7 @@ export class ChatView extends ItemView {
 
     for (const model of models) {
       const option = this.modelSelectEl.createEl("option", { text: model, value: model });
-      option.selected = model === (this.session.model || provider.defaultModel);
+      option.selected = model === currentModel;
     }
 
     this.modelSelectEl.addEventListener("change", () => {
@@ -384,10 +393,8 @@ export class ChatView extends ItemView {
     const clearButton = this.historyEl.createEl("button", { text: "清空历史" });
     clearButton.addEventListener("click", async () => {
       await this.plugin.chatStore.clear();
-      this.session = this.plugin.chatStore.createSession(
-        this.getSelectedProvider()?.id ?? this.plugin.settings.providers[0].id,
-        this.getSelectedProvider()?.defaultModel ?? ""
-      );
+      const provider = this.getDefaultProvider() ?? this.plugin.settings.providers[0];
+      this.session = this.plugin.chatStore.createSession(provider.id, this.resolveModelForProvider(provider));
       this.render();
     });
 
@@ -395,7 +402,7 @@ export class ChatView extends ItemView {
       const row = this.historyEl.createDiv("mobile-ai-history-row");
       const openButton = row.createEl("button", { text: session.title });
       openButton.addEventListener("click", () => {
-        this.session = session;
+        this.session = this.hydrateSession(session);
         this.attachments = [];
         this.historyOpen = false;
         this.render();
@@ -423,7 +430,7 @@ export class ChatView extends ItemView {
       return;
     }
 
-    const model = this.modelSelectEl.value || provider.defaultModel;
+    const model = this.resolveModelForProvider(provider, this.modelSelectEl.value || session.model);
     const attachments = [...this.attachments];
     const userMessage = createMessage("user", userInput);
     let inputToRestore: string | null = null;
@@ -504,8 +511,76 @@ export class ChatView extends ItemView {
   }
 
   private getSelectedProvider(): ProviderConfig | null {
-    const id = this.session?.providerId ?? this.plugin.settings.defaultProviderId;
-    return this.plugin.settings.providers.find((provider) => provider.id === id) ?? this.plugin.settings.providers[0] ?? null;
+    const selectedId = this.providerSelectEl?.value || this.session?.providerId || this.plugin.settings.defaultProviderId;
+    const selectedProvider = this.getConfiguredProviderById(selectedId);
+
+    if (selectedProvider && this.getProviderModels(selectedProvider).length) {
+      return selectedProvider;
+    }
+
+    const defaultProvider = this.getDefaultProvider();
+
+    if (defaultProvider && this.getProviderModels(defaultProvider).length) {
+      return defaultProvider;
+    }
+
+    return selectedProvider ?? defaultProvider ?? this.plugin.settings.providers[0] ?? null;
+  }
+
+  private getDefaultProvider(): ProviderConfig | null {
+    const configuredDefault = this.getConfiguredProviderById(this.plugin.settings.defaultProviderId);
+
+    if (configuredDefault && this.getProviderModels(configuredDefault).length) {
+      return configuredDefault;
+    }
+
+    return this.plugin.settings.providers.find((provider) => this.getProviderModels(provider).length)
+      ?? configuredDefault
+      ?? this.plugin.settings.providers[0]
+      ?? null;
+  }
+
+  private getConfiguredProviderById(id: string | undefined): ProviderConfig | null {
+    if (!id) {
+      return null;
+    }
+
+    return this.plugin.settings.providers.find((provider) => provider.id === id) ?? null;
+  }
+
+  private hydrateSession(session: ChatSession): ChatSession {
+    const sessionProvider = this.getConfiguredProviderById(session.providerId);
+    const provider = sessionProvider && this.getProviderModels(sessionProvider).length
+      ? sessionProvider
+      : this.getDefaultProvider() ?? sessionProvider;
+
+    if (!provider) {
+      return session;
+    }
+
+    const model = this.resolveModelForProvider(provider, session.model);
+
+    session.providerId = provider.id;
+    session.model = model;
+
+    return session;
+  }
+
+  private getProviderModels(provider: ProviderConfig): string[] {
+    return unique([provider.defaultModel, ...provider.models]
+      .map((model) => model.trim())
+      .filter(Boolean));
+  }
+
+  private resolveModelForProvider(provider: ProviderConfig, preferredModel = ""): string {
+    const models = this.getProviderModels(provider);
+    const preferred = preferredModel.trim();
+
+    if (preferred && models.includes(preferred)) {
+      return preferred;
+    }
+
+    return provider.defaultModel.trim() || models[0] || preferred;
   }
 
   private runNoteAction(action: () => void): void {

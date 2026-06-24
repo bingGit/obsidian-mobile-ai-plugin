@@ -75,6 +75,9 @@ export class MobileAiSettingsTab extends PluginSettingTab {
           .setValue(provider.defaultModel)
           .onChange(async (value) => {
             provider.defaultModel = value.trim();
+            if (provider.defaultModel && !provider.models.includes(provider.defaultModel)) {
+              provider.models = [provider.defaultModel, ...provider.models];
+            }
             await this.mobilePlugin.saveSettings();
           }));
 
@@ -88,6 +91,9 @@ export class MobileAiSettingsTab extends PluginSettingTab {
             .setValue(provider.models.join(", "))
             .onChange(async (value) => {
               provider.models = splitModels(value);
+              if (!provider.defaultModel && provider.models.length) {
+                provider.defaultModel = provider.models[0];
+              }
               await this.mobilePlugin.saveSettings();
             });
         });

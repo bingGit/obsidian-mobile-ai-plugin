@@ -74,11 +74,19 @@ export function normalizeSettings(data: Partial<MobileAiSettings> | null | undef
     settings.defaultProviderId = settings.providers[0].id;
   }
 
-  settings.providers = settings.providers.map((provider) => ({
-    ...createProviderConfig(),
-    ...provider,
-    models: Array.isArray(provider.models) ? provider.models : []
-  }));
+  settings.providers = settings.providers.map((provider) => {
+    const models = Array.isArray(provider.models)
+      ? provider.models.map((model) => model.trim()).filter(Boolean)
+      : [];
+    const defaultModel = provider.defaultModel?.trim() || models[0] || "";
+
+    return {
+      ...createProviderConfig(),
+      ...provider,
+      defaultModel,
+      models
+    };
+  });
 
   return settings;
 }
