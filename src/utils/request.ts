@@ -1,6 +1,6 @@
 import { requestUrl } from "obsidian";
 
-import { UserFacingError } from "./errors";
+import { RetryableNetworkError, UserFacingError } from "./errors";
 
 export interface JsonRequestOptions {
   url: string;
@@ -88,8 +88,9 @@ function normalizeRequestError(error: unknown): Error {
     || lower.includes("connection reset")
     || lower.includes("socket")
   ) {
-    return new UserFacingError(
-      `移动端网络连接被提前断开。请确认 Base URL 正确、模型服务关闭流式响应，或换网络后重试。原始错误：${message}`
+    return new RetryableNetworkError(
+      `移动端网络连接被提前断开。短连接测试成功只能说明 API 凭据可用，真实聊天的长响应仍可能被中转站或 Android 网络层中断。插件会尝试用更短输出重试。原始错误：${message}`,
+      message
     );
   }
 

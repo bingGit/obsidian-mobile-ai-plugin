@@ -1,5 +1,5 @@
 import type { ProviderConfig } from "../settings/types";
-import { UserFacingError } from "../utils/errors";
+import { RetryableNetworkError, UserFacingError } from "../utils/errors";
 import { joinChatCompletionsUrl, requestJson } from "../utils/request";
 import type { AiProvider, ChatRequest, ChatResponse, TestResult } from "./types";
 
@@ -25,7 +25,7 @@ export class OpenAICompatibleProvider implements AiProvider {
   name = "OpenAI Compatible";
 
   async sendChat(request: ChatRequest): Promise<ChatResponse> {
-    const data = await this.postChatCompletion(request);
+    const data = await this.postChatCompletionWithRetry(request);
     const content = data.choices?.[0]?.message?.content?.trim();
 
     if (!content) {
@@ -36,6 +36,28 @@ export class OpenAICompatibleProvider implements AiProvider {
       content,
       raw: data
     };
+  }
+
+  private async postChatCompletionWithRetry(request: ChatRequest): Promise<OpenAIChatResponse> {
+    try {
+      return await this.postChatCompletion(request);
+    } catch (error) {
+      if (!(error instanceof RetryableNetworkError) || request.maxTokens <= 768) {
+        throw error;
+      }
+
+      return this.postChatCompletion({
+        ...request,
+        maxTokens: 512,
+        messages: [
+          ...request.messages,
+          {
+            role: "system",
+            content: "The mobile network disconnected during the previous attempt. Keep the answer concise and under 500 Chinese characters unless the user explicitly asked for code."
+          }
+        ]
+      });
+    }
   }
 
   async testConnection(config: ProviderConfig, timeoutMs: number): Promise<TestResult> {
