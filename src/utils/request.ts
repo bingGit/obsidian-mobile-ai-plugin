@@ -145,21 +145,44 @@ function summarizeBody(body: unknown): string {
   const candidate = body as {
     model?: unknown;
     messages?: Array<{ content?: unknown }>;
+    input?: Array<{ content?: unknown }>;
+    instructions?: unknown;
     max_tokens?: unknown;
+    max_output_tokens?: unknown;
     temperature?: unknown;
     stream?: unknown;
   };
-  const messageCount = Array.isArray(candidate.messages) ? candidate.messages.length : 0;
-  const messageCharacters = Array.isArray(candidate.messages)
-    ? candidate.messages.reduce((total, message) => total + String(message.content ?? "").length, 0)
+  const inputs = Array.isArray(candidate.messages) ? candidate.messages : Array.isArray(candidate.input) ? candidate.input : [];
+  const messageCount = inputs.length;
+  const messageCharacters = inputs.length
+    ? inputs.reduce((total, message) => total + summarizeContentLength(message.content), 0)
     : 0;
 
   return [
     `model=${String(candidate.model ?? "")}`,
     `messages=${messageCount}`,
     `messageChars=${messageCharacters}`,
+    `instructionsChars=${String(candidate.instructions ? String(candidate.instructions).length : 0)}`,
     `max_tokens=${String(candidate.max_tokens ?? "")}`,
+    `max_output_tokens=${String(candidate.max_output_tokens ?? "")}`,
     `temperature=${String(candidate.temperature ?? "")}`,
     `stream=${String(candidate.stream ?? "")}`
   ].join("; ");
+}
+
+function summarizeContentLength(content: unknown): number {
+  if (typeof content === "string") {
+    return content.length;
+  }
+
+  if (Array.isArray(content)) {
+    return content.reduce((total, item) => total + summarizeContentLength(item), 0);
+  }
+
+  if (content && typeof content === "object") {
+    const candidate = content as { text?: unknown; content?: unknown };
+    return summarizeContentLength(candidate.text) + summarizeContentLength(candidate.content);
+  }
+
+  return String(content ?? "").length;
 }

@@ -400,6 +400,11 @@ export class OpenAICompatibleProvider implements AiProvider {
         return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
       }
 
+      if (looksLikeJsonResponse(diagnostics.responseContentType)) {
+        const text = await response.text();
+        return extractChatCompletionTextFromJson(text);
+      }
+
       return await readSseStream(response.body, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta), () => {
         idleTimeout.bump();
       });
@@ -475,6 +480,11 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       if (!response.body) {
         return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
+      }
+
+      if (looksLikeJsonResponse(diagnostics.responseContentType)) {
+        const text = await response.text();
+        return extractResponsesTextFromJson(text);
       }
 
       return await readSseStream(response.body, diagnostics, (event) => parseResponsesStreamEvent(event, onDelta), () => {
@@ -578,6 +588,16 @@ export class OpenAICompatibleProvider implements AiProvider {
         if (buffer) {
           const result = readSseText("\n\n", buffer, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta));
           content += result.content;
+        }
+
+        if (!content.trim() && looksLikeJsonResponse(diagnostics.responseContentType)) {
+          try {
+            resolve(extractChatCompletionTextFromJson(xhr.responseText));
+            return;
+          } catch (error) {
+            reject(appendDebugDetails(error, buildStreamDebugDetails(diagnostics)));
+            return;
+          }
         }
 
         resolve(content);
@@ -684,6 +704,16 @@ export class OpenAICompatibleProvider implements AiProvider {
         if (buffer) {
           const result = readSseText("\n\n", buffer, diagnostics, (event) => parseResponsesStreamEvent(event, onDelta));
           content += result.content;
+        }
+
+        if (!content.trim() && looksLikeJsonResponse(diagnostics.responseContentType)) {
+          try {
+            resolve(extractResponsesTextFromJson(xhr.responseText));
+            return;
+          } catch (error) {
+            reject(appendDebugDetails(error, buildStreamDebugDetails(diagnostics)));
+            return;
+          }
         }
 
         resolve(content);
@@ -873,6 +903,32 @@ function extractResponsesText(response: ResponsesApiResponse): string {
     .join("");
 }
 
+function extractChatCompletionTextFromJson(text: string): string {
+  const response = JSON.parse(text) as OpenAIChatResponse;
+  const content = response.choices?.[0]?.message?.content?.trim();
+
+  if (!content) {
+    throw new UserFacingError("流式请求返回了 JSON，但内容为空。", [
+      { label: "响应摘要", value: truncate(text, 1000) }
+    ]);
+  }
+
+  return content;
+}
+
+function extractResponsesTextFromJson(text: string): string {
+  const response = JSON.parse(text) as ResponsesApiResponse;
+  const content = extractResponsesText(response).trim();
+
+  if (!content) {
+    throw new UserFacingError("流式请求返回了 JSON，但内容为空。", [
+      { label: "响应摘要", value: truncate(text, 1000) }
+    ]);
+  }
+
+  return content;
+}
+
 function buildResponsesBody(request: ChatRequest, stream: boolean): Record<string, unknown> {
   const instructions = request.messages
     .filter((message) => message.role === "system")
@@ -1015,4 +1071,8 @@ function summarizeRawResponseHeaders(rawHeaders: string): string {
     .join("; ");
 
   return normalized || "(empty)";
+}
+
+function looksLikeJsonResponse(contentType: string): boolean {
+  return contentType.toLowerCase().includes("application/json");
 }
