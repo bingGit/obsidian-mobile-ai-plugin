@@ -19,6 +19,7 @@ export class ChatView extends ItemView {
   private session: ChatSession | null = null;
   private attachments: ContextAttachment[] = [];
   private sending = false;
+  private statusText = "";
   private historyOpen = false;
 
   private providerSelectEl!: HTMLSelectElement;
@@ -124,6 +125,10 @@ export class ChatView extends ItemView {
 
     this.attachmentListEl = containerEl.createDiv("mobile-ai-attachments");
     this.renderAttachments();
+
+    const statusEl = containerEl.createDiv("mobile-ai-status");
+    statusEl.toggle(Boolean(this.statusText));
+    statusEl.setText(this.statusText);
 
     const composerEl = containerEl.createDiv("mobile-ai-composer");
     this.suggestionEl = composerEl.createDiv("mobile-ai-suggestions");
@@ -439,7 +444,9 @@ export class ChatView extends ItemView {
     session.model = model;
     session.messages.push(userMessage);
     this.sending = true;
+    this.statusText = "正在整理上下文并请求模型...";
     this.renderMessages();
+    this.render();
 
     try {
       const result = await this.controller.send({
@@ -459,10 +466,12 @@ export class ChatView extends ItemView {
       new Notice(`已发送，约 ${result.characterCount} 字符上下文。`);
     } catch (error) {
       session.messages = session.messages.filter((message) => message.id !== userMessage.id);
+      session.messages.push(createMessage("assistant", `请求失败：${toUserMessage(error)}`));
       inputToRestore = userInput;
       new Notice(toUserMessage(error));
     } finally {
       this.sending = false;
+      this.statusText = "";
       this.render();
       if (inputToRestore) {
         this.setPrompt(inputToRestore);

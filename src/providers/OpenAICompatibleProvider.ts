@@ -39,7 +39,9 @@ export class OpenAICompatibleProvider implements AiProvider {
   }
 
   async testConnection(config: ProviderConfig, timeoutMs: number): Promise<TestResult> {
-    if (!config.defaultModel.trim()) {
+    const model = resolveModel(config);
+
+    if (!model) {
       return {
         ok: false,
         message: "请先填写模型名。"
@@ -49,7 +51,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     try {
       await this.sendChat({
         config,
-        model: config.defaultModel,
+        model,
         messages: [
           {
             role: "user",
@@ -75,9 +77,14 @@ export class OpenAICompatibleProvider implements AiProvider {
 
   private async postChatCompletion(request: ChatRequest): Promise<OpenAIChatResponse> {
     const { config } = request;
+    const model = request.model.trim() || resolveModel(config);
 
     if (!config.apiKey.trim()) {
       throw new UserFacingError("请先配置 API Key。");
+    }
+
+    if (!model) {
+      throw new UserFacingError("请先选择或填写模型。");
     }
 
     const response = await requestJson<OpenAIChatResponse>({
@@ -89,7 +96,7 @@ export class OpenAICompatibleProvider implements AiProvider {
         Authorization: `Bearer ${config.apiKey.trim()}`
       },
       body: {
-        model: request.model,
+        model,
         messages: request.messages,
         temperature: request.temperature,
         max_tokens: request.maxTokens,
@@ -104,4 +111,8 @@ export class OpenAICompatibleProvider implements AiProvider {
 
     return response.json;
   }
+}
+
+function resolveModel(config: ProviderConfig): string {
+  return config.defaultModel.trim() || config.models.map((model) => model.trim()).find(Boolean) || "";
 }
