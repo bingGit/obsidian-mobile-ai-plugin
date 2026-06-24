@@ -1,8 +1,11 @@
+export type ProviderApiFormat = "chat-completions" | "responses";
+
 export interface ProviderConfig {
   id: string;
   name: string;
   baseUrl: string;
   apiKey: string;
+  apiFormat: ProviderApiFormat;
   defaultModel: string;
   models: string[];
   temperature: number;
@@ -29,6 +32,7 @@ export const DEFAULT_SETTINGS: MobileAiSettings = {
       name: "OpenAI Compatible",
       baseUrl: "",
       apiKey: "",
+      apiFormat: "chat-completions",
       defaultModel: "",
       models: [],
       temperature: 0.7,
@@ -52,6 +56,7 @@ export function createProviderConfig(): ProviderConfig {
     name: "OpenAI Compatible",
     baseUrl: "",
     apiKey: "",
+    apiFormat: "chat-completions",
     defaultModel: "",
     models: [],
     temperature: 0.7,

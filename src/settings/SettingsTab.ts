@@ -44,8 +44,20 @@ export class MobileAiSettingsTab extends PluginSettingTab {
           }));
 
       new Setting(details)
+        .setName("接口格式")
+        .setDesc("普通文本聊天优先选 Responses；兼容旧中转站时选 Chat Completions。")
+        .addDropdown((dropdown) => dropdown
+          .addOption("responses", "Responses API (/v1/responses)")
+          .addOption("chat-completions", "Chat Completions (/v1/chat/completions)")
+          .setValue(provider.apiFormat)
+          .onChange(async (value) => {
+            provider.apiFormat = value as ProviderConfig["apiFormat"];
+            await this.mobilePlugin.saveSettings();
+          }));
+
+      new Setting(details)
         .setName("Base URL")
-        .setDesc("例如 https://api.example.com/v1。若已包含 /chat/completions，插件不会重复拼接。")
+        .setDesc("例如 https://api.example.com/v1。若已包含完整接口路径，插件不会重复拼接。")
         .addText((text) => text
           .setPlaceholder("https://api.example.com/v1")
           .setValue(provider.baseUrl)

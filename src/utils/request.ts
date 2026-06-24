@@ -1,6 +1,7 @@
 import { requestUrl } from "obsidian";
 
 import { type DebugDetail, RetryableNetworkError, UserFacingError } from "./errors";
+import type { ProviderApiFormat } from "../settings/types";
 
 export interface JsonRequestOptions {
   url: string;
@@ -51,18 +52,20 @@ export async function requestJson<T>(options: JsonRequestOptions): Promise<JsonR
   }
 }
 
-export function joinChatCompletionsUrl(baseUrl: string): string {
+export function joinModelApiUrl(baseUrl: string, apiFormat: ProviderApiFormat): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
 
   if (!trimmed) {
     throw new UserFacingError("请先配置 Base URL。");
   }
 
-  if (trimmed.endsWith("/chat/completions")) {
+  const suffix = apiFormat === "responses" ? "/responses" : "/chat/completions";
+
+  if (trimmed.endsWith("/chat/completions") || trimmed.endsWith("/responses")) {
     return trimmed;
   }
 
-  return `${trimmed}/chat/completions`;
+  return `${trimmed}${suffix}`;
 }
 
 function getMobileSafeHeaders(headers: Record<string, string> | undefined): Record<string, string> {

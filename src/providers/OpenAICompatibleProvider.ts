@@ -1,6 +1,6 @@
-import type { ProviderConfig } from "../settings/types";
+import type { ProviderApiFormat, ProviderConfig } from "../settings/types";
 import { appendDebugDetails, RetryableNetworkError, UserFacingError } from "../utils/errors";
-import { joinChatCompletionsUrl, requestJson } from "../utils/request";
+import { joinModelApiUrl, requestJson } from "../utils/request";
 import type { AiProvider, ChatRequest, ChatResponse, TestResult } from "./types";
 
 interface OpenAIChoice {
@@ -30,13 +30,42 @@ interface OpenAIStreamChunk extends OpenAIErrorResponse {
   choices?: OpenAIStreamChoice[];
 }
 
+interface ResponsesContentItem {
+  type?: string;
+  text?: string;
+}
+
+interface ResponsesOutputItem {
+  role?: string;
+  content?: ResponsesContentItem[];
+}
+
+interface ResponsesApiResponse extends OpenAIErrorResponse {
+  output?: ResponsesOutputItem[];
+}
+
+interface ResponsesStreamChunk extends OpenAIErrorResponse {
+  type?: string;
+  delta?: string;
+  response?: ResponsesApiResponse;
+}
+
 export class OpenAICompatibleProvider implements AiProvider {
   id = "openai-compatible";
   name = "OpenAI Compatible";
 
   async sendChat(request: ChatRequest): Promise<ChatResponse> {
-    const data = await this.postChatCompletionWithRetry(request);
-    const content = data.choices?.[0]?.message?.content?.trim();
+    let data: OpenAIChatResponse | ResponsesApiResponse;
+    let content = "";
+
+    if (request.config.apiFormat === "responses") {
+      data = await this.postResponsesWithRetry(request);
+      content = extractResponsesText(data).trim();
+    } else {
+      const chatData = await this.postChatCompletionWithRetry(request);
+      data = chatData;
+      content = chatData.choices?.[0]?.message?.content?.trim() ?? "";
+    }
 
     if (!content) {
       throw new UserFacingError("模型返回为空。");
@@ -56,7 +85,9 @@ export class OpenAICompatibleProvider implements AiProvider {
     };
 
     try {
-      const content = await this.streamChatCompletionWithFetch(request, emitDelta);
+      const content = request.config.apiFormat === "responses"
+        ? await this.streamResponsesWithFetch(request, emitDelta)
+        : await this.streamChatCompletionWithFetch(request, emitDelta);
 
       if (!content.trim()) {
         throw new UserFacingError("模型返回为空。");
@@ -77,7 +108,9 @@ export class OpenAICompatibleProvider implements AiProvider {
         request.onStatus?.("fetch 流式连接不可用，正在尝试 XHR 流式通道");
 
         try {
-          const xhrContent = await this.streamChatCompletionWithXhr(request, emitDelta);
+          const xhrContent = request.config.apiFormat === "responses"
+            ? await this.streamResponsesWithXhr(request, emitDelta)
+            : await this.streamChatCompletionWithXhr(request, emitDelta);
 
           if (xhrContent.trim()) {
             return {
@@ -140,6 +173,35 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
   }
 
+  private async postResponsesWithRetry(request: ChatRequest): Promise<ResponsesApiResponse> {
+    try {
+      return await this.postResponses(request);
+    } catch (error) {
+      if (!(error instanceof RetryableNetworkError) || request.maxTokens <= 768) {
+        throw error;
+      }
+
+      try {
+        return await this.postResponses({
+          ...request,
+          maxTokens: 512,
+          messages: [
+            ...request.messages,
+            {
+              role: "system",
+              content: "The mobile network disconnected during the previous attempt. Keep the answer concise and under 500 Chinese characters unless the user explicitly asked for code."
+            }
+          ]
+        });
+      } catch (retryError) {
+        throw appendDebugDetails(retryError, [
+          { label: "首次请求错误", value: error.originalMessage },
+          { label: "是否已重试", value: "是，重试 max_output_tokens=512" }
+        ]);
+      }
+    }
+  }
+
   async testConnection(config: ProviderConfig, timeoutMs: number): Promise<TestResult> {
     const model = resolveModel(config);
 
@@ -190,7 +252,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
 
     const response = await requestJson<OpenAIChatResponse>({
-      url: joinChatCompletionsUrl(config.baseUrl),
+      url: joinModelApiUrl(config.baseUrl, "chat-completions"),
       method: "POST",
       timeoutMs: request.timeoutMs,
       headers: {
@@ -211,9 +273,47 @@ export class OpenAICompatibleProvider implements AiProvider {
       throw new UserFacingError(`请求失败：${message}`, [
         { label: "HTTP 状态", value: String(response.status) },
         { label: "响应摘要", value: truncate(response.text || JSON.stringify(response.json), 2000) },
-        { label: "请求 URL", value: joinChatCompletionsUrl(config.baseUrl) },
+        { label: "请求 URL", value: joinModelApiUrl(config.baseUrl, "chat-completions") },
         { label: "模型", value: model },
         { label: "max_tokens", value: String(request.maxTokens) },
+        { label: "stream", value: "false" }
+      ]);
+    }
+
+    return response.json;
+  }
+
+  private async postResponses(request: ChatRequest): Promise<ResponsesApiResponse> {
+    const { config } = request;
+    const model = request.model.trim() || resolveModel(config);
+
+    if (!config.apiKey.trim()) {
+      throw new UserFacingError("请先配置 API Key。");
+    }
+
+    if (!model) {
+      throw new UserFacingError("请先选择或填写模型。");
+    }
+
+    const response = await requestJson<ResponsesApiResponse>({
+      url: joinModelApiUrl(config.baseUrl, "responses"),
+      method: "POST",
+      timeoutMs: request.timeoutMs,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${config.apiKey.trim()}`
+      },
+      body: buildResponsesBody(request, false)
+    });
+
+    if (response.status < 200 || response.status >= 300) {
+      const message = response.json?.error?.message ?? response.text ?? `HTTP ${response.status}`;
+      throw new UserFacingError(`请求失败：${message}`, [
+        { label: "HTTP 状态", value: String(response.status) },
+        { label: "响应摘要", value: truncate(response.text || JSON.stringify(response.json), 2000) },
+        { label: "请求 URL", value: joinModelApiUrl(config.baseUrl, "responses") },
+        { label: "模型", value: model },
+        { label: "max_output_tokens", value: String(request.maxTokens) },
         { label: "stream", value: "false" }
       ]);
     }
@@ -237,7 +337,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
     }
 
-    const url = joinChatCompletionsUrl(config.baseUrl);
+    const url = joinModelApiUrl(config.baseUrl, "chat-completions");
     const body = {
       model,
       messages: request.messages,
@@ -276,9 +376,8 @@ export class OpenAICompatibleProvider implements AiProvider {
         return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
       }
 
-      return await readSseStream(response.body, (delta) => {
+      return await readSseStream(response.body, (chunk) => parseChatCompletionsStreamChunk(chunk, onDelta), () => {
         idleTimeout.bump();
-        onDelta(delta);
       });
     } catch (error) {
       if (error instanceof UserFacingError) {
@@ -300,6 +399,77 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
   }
 
+  private async streamResponsesWithFetch(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
+    const { config } = request;
+    const model = request.model.trim() || resolveModel(config);
+
+    if (!config.apiKey.trim()) {
+      throw new UserFacingError("请先配置 API Key。");
+    }
+
+    if (!model) {
+      throw new UserFacingError("请先选择或填写模型。");
+    }
+
+    if (!window.fetch || !window.ReadableStream) {
+      return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
+    }
+
+    const url = joinModelApiUrl(config.baseUrl, "responses");
+    const controller = new AbortController();
+    const idleTimeout = createIdleTimeout(request.timeoutMs, () => controller.abort());
+
+    try {
+      const response = await fetch(url, {
+        method: "POST",
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey.trim()}`
+        },
+        body: JSON.stringify(buildResponsesBody(request, true)),
+        signal: controller.signal
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new UserFacingError(`请求失败：${text || `HTTP ${response.status}`}`, [
+          { label: "HTTP 状态", value: String(response.status) },
+          { label: "响应摘要", value: truncate(text, 2000) },
+          { label: "请求 URL", value: url },
+          { label: "模型", value: model },
+          { label: "max_output_tokens", value: String(request.maxTokens) },
+          { label: "stream", value: "true" }
+        ]);
+      }
+
+      if (!response.body) {
+        return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
+      }
+
+      return await readSseStream(response.body, (chunk) => parseResponsesStreamChunk(chunk, onDelta), () => {
+        idleTimeout.bump();
+      });
+    } catch (error) {
+      if (error instanceof UserFacingError) {
+        throw error;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      throw new UserFacingError(message, [
+        { label: "请求方法", value: "POST" },
+        { label: "请求 URL", value: url },
+        { label: "模型", value: model },
+        { label: "max_output_tokens", value: String(request.maxTokens) },
+        { label: "stream", value: "true" },
+        { label: "请求体摘要", value: `messages=${request.messages.length}; messageChars=${countMessageCharacters(request.messages)}` },
+        { label: "原始错误", value: message }
+      ]);
+    } finally {
+      idleTimeout.clear();
+    }
+  }
+
   private async streamChatCompletionWithXhr(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
     const { config } = request;
     const model = request.model.trim() || resolveModel(config);
@@ -312,7 +482,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       throw new UserFacingError("请先选择或填写模型。");
     }
 
-    const url = joinChatCompletionsUrl(config.baseUrl);
+    const url = joinModelApiUrl(config.baseUrl, "chat-completions");
     const body = {
       model,
       messages: request.messages,
@@ -347,7 +517,7 @@ export class OpenAICompatibleProvider implements AiProvider {
         idleTimeout.bump();
         const nextText = xhr.responseText.slice(seenLength);
         seenLength = xhr.responseText.length;
-        const result = readSseText(nextText, buffer, onDelta);
+        const result = readSseText(nextText, buffer, (chunk) => parseChatCompletionsStreamChunk(chunk, onDelta));
         buffer = result.buffer;
         content += result.content;
       };
@@ -369,7 +539,7 @@ export class OpenAICompatibleProvider implements AiProvider {
         }
 
         if (buffer) {
-          const result = readSseText("\n", buffer, onDelta);
+          const result = readSseText("\n", buffer, (chunk) => parseChatCompletionsStreamChunk(chunk, onDelta));
           content += result.content;
         }
 
@@ -404,6 +574,104 @@ export class OpenAICompatibleProvider implements AiProvider {
       xhr.send(JSON.stringify(body));
     });
   }
+
+  private async streamResponsesWithXhr(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
+    const { config } = request;
+    const model = request.model.trim() || resolveModel(config);
+
+    if (!config.apiKey.trim()) {
+      throw new UserFacingError("请先配置 API Key。");
+    }
+
+    if (!model) {
+      throw new UserFacingError("请先选择或填写模型。");
+    }
+
+    const url = joinModelApiUrl(config.baseUrl, "responses");
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let buffer = "";
+      let content = "";
+      let seenLength = 0;
+      const idleTimeout = createIdleTimeout(request.timeoutMs, () => {
+        xhr.abort();
+        reject(new UserFacingError(`流式请求超过 ${request.timeoutMs} 毫秒仍未完成。`, [
+          { label: "请求方法", value: "POST" },
+          { label: "请求 URL", value: url },
+          { label: "模型", value: model },
+          { label: "max_output_tokens", value: String(request.maxTokens) },
+          { label: "stream", value: "true" },
+          { label: "流式通道", value: "XMLHttpRequest" }
+        ]));
+      });
+
+      xhr.open("POST", url, true);
+      xhr.setRequestHeader("Accept", "text/event-stream");
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.setRequestHeader("Authorization", `Bearer ${config.apiKey.trim()}`);
+
+      xhr.onprogress = () => {
+        idleTimeout.bump();
+        const nextText = xhr.responseText.slice(seenLength);
+        seenLength = xhr.responseText.length;
+        const result = readSseText(nextText, buffer, (chunk) => parseResponsesStreamChunk(chunk, onDelta));
+        buffer = result.buffer;
+        content += result.content;
+      };
+
+      xhr.onload = () => {
+        idleTimeout.clear();
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new UserFacingError(`请求失败：${xhr.responseText || `HTTP ${xhr.status}`}`, [
+            { label: "HTTP 状态", value: String(xhr.status) },
+            { label: "响应摘要", value: truncate(xhr.responseText, 2000) },
+            { label: "请求 URL", value: url },
+            { label: "模型", value: model },
+            { label: "max_output_tokens", value: String(request.maxTokens) },
+            { label: "stream", value: "true" },
+            { label: "流式通道", value: "XMLHttpRequest" }
+          ]));
+          return;
+        }
+
+        if (buffer) {
+          const result = readSseText("\n", buffer, (chunk) => parseResponsesStreamChunk(chunk, onDelta));
+          content += result.content;
+        }
+
+        resolve(content);
+      };
+
+      xhr.onerror = () => {
+        idleTimeout.clear();
+        reject(new UserFacingError("XMLHttpRequest 流式连接失败。", [
+          { label: "请求方法", value: "POST" },
+          { label: "请求 URL", value: url },
+          { label: "模型", value: model },
+          { label: "max_output_tokens", value: String(request.maxTokens) },
+          { label: "stream", value: "true" },
+          { label: "流式通道", value: "XMLHttpRequest" },
+          { label: "原始错误", value: "xhr.onerror" }
+        ]));
+      };
+
+      xhr.onabort = () => {
+        idleTimeout.clear();
+        reject(new UserFacingError("XMLHttpRequest 流式连接已中止。", [
+          { label: "请求方法", value: "POST" },
+          { label: "请求 URL", value: url },
+          { label: "模型", value: model },
+          { label: "max_output_tokens", value: String(request.maxTokens) },
+          { label: "stream", value: "true" },
+          { label: "流式通道", value: "XMLHttpRequest" }
+        ]));
+      };
+
+      xhr.send(JSON.stringify(buildResponsesBody(request, true)));
+    });
+  }
 }
 
 function resolveModel(config: ProviderConfig): string {
@@ -414,7 +682,11 @@ function truncate(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
 
-async function readSseStream(body: ReadableStream<Uint8Array>, onDelta: (text: string) => void): Promise<string> {
+async function readSseStream(
+  body: ReadableStream<Uint8Array>,
+  parseChunk: (chunk: string) => string,
+  onActivity: () => void
+): Promise<string> {
   const reader = body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
@@ -427,9 +699,10 @@ async function readSseStream(body: ReadableStream<Uint8Array>, onDelta: (text: s
       break;
     }
 
-    const result = readSseText(decoder.decode(value, { stream: true }), buffer, onDelta);
+    const result = readSseText(decoder.decode(value, { stream: true }), buffer, parseChunk);
     buffer = result.buffer;
     content += result.content;
+    onActivity();
   }
 
   return content;
@@ -438,7 +711,7 @@ async function readSseStream(body: ReadableStream<Uint8Array>, onDelta: (text: s
 function readSseText(
   text: string,
   previousBuffer: string,
-  onDelta: (text: string) => void
+  parseChunk: (chunk: string) => string
 ): { buffer: string; content: string } {
   let content = "";
   const lines = `${previousBuffer}${text}`.split(/\r?\n/);
@@ -457,18 +730,78 @@ function readSseText(
       continue;
     }
 
-    const chunk = JSON.parse(data) as OpenAIStreamChunk;
-    const delta = chunk.choices?.[0]?.delta?.content ?? "";
+    const delta = parseChunk(data);
 
     if (delta) {
       content += delta;
-      onDelta(delta);
     }
   }
 
   return {
     buffer,
     content
+  };
+}
+
+function parseChatCompletionsStreamChunk(data: string, onDelta: (text: string) => void): string {
+  const chunk = JSON.parse(data) as OpenAIStreamChunk;
+  const delta = chunk.choices?.[0]?.delta?.content ?? "";
+
+  if (delta) {
+    onDelta(delta);
+  }
+
+  return delta;
+}
+
+function parseResponsesStreamChunk(data: string, onDelta: (text: string) => void): string {
+  const chunk = JSON.parse(data) as ResponsesStreamChunk;
+
+  if (chunk.error?.message) {
+    throw new UserFacingError(`请求失败：${chunk.error.message}`);
+  }
+
+  if (chunk.type === "response.output_text.delta" && typeof chunk.delta === "string") {
+    onDelta(chunk.delta);
+    return chunk.delta;
+  }
+
+  if (chunk.type === "response.completed" && chunk.response) {
+    return "";
+  }
+
+  return "";
+}
+
+function extractResponsesText(response: ResponsesApiResponse): string {
+  return (response.output ?? [])
+    .filter((item) => item.role === "assistant")
+    .flatMap((item) => item.content ?? [])
+    .filter((item) => item.type === "output_text" && typeof item.text === "string")
+    .map((item) => item.text ?? "")
+    .join("");
+}
+
+function buildResponsesBody(request: ChatRequest, stream: boolean): Record<string, unknown> {
+  const instructions = request.messages
+    .filter((message) => message.role === "system")
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+    .join("\n\n");
+  const input = request.messages
+    .filter((message) => message.role !== "system")
+    .map((message) => ({
+      role: message.role,
+      content: message.content
+    }));
+
+  return {
+    model: request.model,
+    instructions: instructions || undefined,
+    input,
+    temperature: request.temperature,
+    max_output_tokens: request.maxTokens,
+    stream
   };
 }
 
