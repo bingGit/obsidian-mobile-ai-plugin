@@ -6,7 +6,7 @@ import { getActiveMentionQuery } from "../context/MentionParser";
 import type { ContextAttachment } from "../context/types";
 import { EditorActions } from "../note-actions/EditorActions";
 import type { ProviderConfig } from "../settings/types";
-import { toUserMessage } from "../utils/errors";
+import { toDebugMessage, toUserMessage } from "../utils/errors";
 import { ChatController } from "./ChatController";
 import { createMessage, type ChatSession } from "./ChatStore";
 
@@ -466,7 +466,7 @@ export class ChatView extends ItemView {
       new Notice(`已发送，约 ${result.characterCount} 字符上下文。`);
     } catch (error) {
       session.messages = session.messages.filter((message) => message.id !== userMessage.id);
-      session.messages.push(createMessage("assistant", `请求失败：${toUserMessage(error)}`));
+      session.messages.push(createMessage("assistant", toDebugMessage(error)));
       inputToRestore = userInput;
       new Notice(toUserMessage(error));
     } finally {

@@ -1,6 +1,6 @@
 import { requestUrl } from "obsidian";
 
-import { RetryableNetworkError, UserFacingError } from "./errors";
+import { type DebugDetail, RetryableNetworkError, UserFacingError } from "./errors";
 
 export interface JsonRequestOptions {
   url: string;
@@ -43,7 +43,7 @@ export async function requestJson<T>(options: JsonRequestOptions): Promise<JsonR
       text: response.text
     };
   } catch (error) {
-    throw normalizeRequestError(error);
+    throw normalizeRequestError(error, options);
   } finally {
     if (timeoutId !== undefined) {
       window.clearTimeout(timeoutId);
@@ -74,13 +74,17 @@ function getMobileSafeHeaders(headers: Record<string, string> | undefined): Reco
   };
 }
 
-function normalizeRequestError(error: unknown): Error {
+function normalizeRequestError(error: unknown, options: JsonRequestOptions): Error {
   if (error instanceof UserFacingError) {
-    return error;
+    return new UserFacingError(
+      error.message,
+      [...error.debugDetails, ...buildRequestDebugDetails(options, error.message)]
+    );
   }
 
   const message = error instanceof Error ? error.message : String(error);
   const lower = message.toLowerCase();
+  const debugDetails = buildRequestDebugDetails(options, message);
 
   if (
     lower.includes("unexpected end of stream")
@@ -90,9 +94,62 @@ function normalizeRequestError(error: unknown): Error {
   ) {
     return new RetryableNetworkError(
       `移动端网络连接被提前断开。短连接测试成功只能说明 API 凭据可用，真实聊天的长响应仍可能被中转站或 Android 网络层中断。插件会尝试用更短输出重试。原始错误：${message}`,
-      message
+      message,
+      debugDetails
     );
   }
 
-  return error instanceof Error ? error : new Error(message);
+  return new UserFacingError(message, debugDetails);
+}
+
+function buildRequestDebugDetails(options: JsonRequestOptions, originalMessage: string): DebugDetail[] {
+  const body = summarizeBody(options.body);
+
+  return [
+    { label: "请求方法", value: options.method ?? "GET" },
+    { label: "请求 URL", value: options.url },
+    { label: "超时毫秒", value: String(options.timeoutMs) },
+    { label: "请求头", value: summarizeHeaders(getMobileSafeHeaders(options.headers)) },
+    { label: "请求体摘要", value: body },
+    { label: "原始错误", value: originalMessage }
+  ];
+}
+
+function summarizeHeaders(headers: Record<string, string>): string {
+  return Object.entries(headers)
+    .map(([key, value]) => {
+      if (key.toLowerCase() === "authorization") {
+        return `${key}=Bearer ***`;
+      }
+
+      return `${key}=${value}`;
+    })
+    .join("; ");
+}
+
+function summarizeBody(body: unknown): string {
+  if (!body || typeof body !== "object") {
+    return body === undefined ? "无" : String(body);
+  }
+
+  const candidate = body as {
+    model?: unknown;
+    messages?: Array<{ content?: unknown }>;
+    max_tokens?: unknown;
+    temperature?: unknown;
+    stream?: unknown;
+  };
+  const messageCount = Array.isArray(candidate.messages) ? candidate.messages.length : 0;
+  const messageCharacters = Array.isArray(candidate.messages)
+    ? candidate.messages.reduce((total, message) => total + String(message.content ?? "").length, 0)
+    : 0;
+
+  return [
+    `model=${String(candidate.model ?? "")}`,
+    `messages=${messageCount}`,
+    `messageChars=${messageCharacters}`,
+    `max_tokens=${String(candidate.max_tokens ?? "")}`,
+    `temperature=${String(candidate.temperature ?? "")}`,
+    `stream=${String(candidate.stream ?? "")}`
+  ].join("; ");
 }

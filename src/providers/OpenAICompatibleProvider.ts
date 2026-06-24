@@ -1,5 +1,5 @@
 import type { ProviderConfig } from "../settings/types";
-import { RetryableNetworkError, UserFacingError } from "../utils/errors";
+import { appendDebugDetails, RetryableNetworkError, UserFacingError } from "../utils/errors";
 import { joinChatCompletionsUrl, requestJson } from "../utils/request";
 import type { AiProvider, ChatRequest, ChatResponse, TestResult } from "./types";
 
@@ -46,17 +46,24 @@ export class OpenAICompatibleProvider implements AiProvider {
         throw error;
       }
 
-      return this.postChatCompletion({
-        ...request,
-        maxTokens: 512,
-        messages: [
-          ...request.messages,
-          {
-            role: "system",
-            content: "The mobile network disconnected during the previous attempt. Keep the answer concise and under 500 Chinese characters unless the user explicitly asked for code."
-          }
-        ]
-      });
+      try {
+        return await this.postChatCompletion({
+          ...request,
+          maxTokens: 512,
+          messages: [
+            ...request.messages,
+            {
+              role: "system",
+              content: "The mobile network disconnected during the previous attempt. Keep the answer concise and under 500 Chinese characters unless the user explicitly asked for code."
+            }
+          ]
+        });
+      } catch (retryError) {
+        throw appendDebugDetails(retryError, [
+          { label: "首次请求错误", value: error.originalMessage },
+          { label: "是否已重试", value: "是，重试 max_tokens=512" }
+        ]);
+      }
     }
   }
 
@@ -128,7 +135,14 @@ export class OpenAICompatibleProvider implements AiProvider {
 
     if (response.status < 200 || response.status >= 300) {
       const message = response.json?.error?.message ?? response.text ?? `HTTP ${response.status}`;
-      throw new UserFacingError(`请求失败：${message}`);
+      throw new UserFacingError(`请求失败：${message}`, [
+        { label: "HTTP 状态", value: String(response.status) },
+        { label: "响应摘要", value: truncate(response.text || JSON.stringify(response.json), 2000) },
+        { label: "请求 URL", value: joinChatCompletionsUrl(config.baseUrl) },
+        { label: "模型", value: model },
+        { label: "max_tokens", value: String(request.maxTokens) },
+        { label: "stream", value: "false" }
+      ]);
     }
 
     return response.json;
@@ -137,4 +151,8 @@ export class OpenAICompatibleProvider implements AiProvider {
 
 function resolveModel(config: ProviderConfig): string {
   return config.defaultModel.trim() || config.models.map((model) => model.trim()).find(Boolean) || "";
+}
+
+function truncate(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
