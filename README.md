@@ -12,6 +12,16 @@ The plugin is designed around the requirements in [docs/obsidian-mobile-ai-plugi
 
 This project intentionally avoids shell execution, local agents, MCP stdio servers, and vault-wide automatic uploads so it can fit the Obsidian mobile plugin environment.
 
+## Streaming Bridge
+
+Direct SSE streaming on Obsidian mobile can fail even when the upstream provider itself supports streaming.
+This repo now includes a minimal `WebSocket bridge` skeleton so the plugin can forward chat requests to a trusted bridge server and receive token deltas back over WebSocket.
+
+References:
+
+- protocol: [docs/websocket-bridge-protocol.md](docs/websocket-bridge-protocol.md)
+- server skeleton: [docs/websocket-bridge-minimal-server.js](docs/websocket-bridge-minimal-server.js)
+
 ## Development
 
 ```bash
