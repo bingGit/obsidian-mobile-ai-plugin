@@ -93,8 +93,15 @@ function normalizeRequestError(error: unknown, options: JsonRequestOptions): Err
     || lower.includes("socket")
   ) {
     return new RetryableNetworkError(
-      `移动端网络连接被提前断开。短连接测试成功只能说明 API 凭据可用，真实聊天的长响应仍可能被中转站或 Android 网络层中断。插件会尝试用更短输出重试。原始错误：${message}`,
+      `移动端网络连接被提前断开。短连接测试成功只能说明 API 凭据可用，真实聊天的长响应仍可能被中转站或 Android 网络层中断。可以尝试把最大输出 token 降到 512，或把请求超时调到 180000。插件会尝试用更短输出重试。原始错误：${message}`,
       message,
+      debugDetails
+    );
+  }
+
+  if (lower.includes("timeout") || message.includes("请求超时")) {
+    return new UserFacingError(
+      `请求超过 ${options.timeoutMs} 毫秒仍未返回。测试连接成功只代表短请求可用；真实聊天在非流式模式下要等完整回答返回。建议把请求超时调到 180000，或把最大输出 token 降到 512 后复测。`,
       debugDetails
     );
   }

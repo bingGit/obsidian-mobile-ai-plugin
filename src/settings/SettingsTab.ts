@@ -152,6 +152,16 @@ export class MobileAiSettingsTab extends PluginSettingTab {
             button.setButtonText("测试连接");
           }))
         .addButton((button) => button
+          .setButtonText("测试真实请求")
+          .onClick(async () => {
+            button.setDisabled(true);
+            button.setButtonText("测试中...");
+            const message = await this.testRealChatRequest(provider);
+            new Notice(message, 10000);
+            button.setDisabled(false);
+            button.setButtonText("测试真实请求");
+          }))
+        .addButton((button) => button
           .setButtonText("删除")
           .setWarning()
           .onClick(async () => {
@@ -205,6 +215,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
 
     new Setting(containerEl)
       .setName("请求超时毫秒")
+      .setDesc("真实聊天通常比测试连接慢很多。移动端建议 120000-180000。")
       .addText((text) => text
         .setValue(String(this.mobilePlugin.settings.requestTimeoutMs))
         .onChange(async (value) => {
@@ -236,6 +247,38 @@ export class MobileAiSettingsTab extends PluginSettingTab {
 
     await this.mobilePlugin.saveSettings();
     this.display();
+  }
+
+  private async testRealChatRequest(provider: ProviderConfig): Promise<string> {
+    const model = provider.defaultModel || provider.models.find(Boolean) || "";
+
+    if (!model) {
+      return "请先填写模型名。";
+    }
+
+    try {
+      const startedAt = Date.now();
+      const response = await this.mobilePlugin.providerRegistry
+        .createProvider(provider)
+        .sendChat({
+          config: provider,
+          model,
+          messages: [
+            {
+              role: "user",
+              content: "请用 100 个中文字以内回复：移动端真实请求测试成功。"
+            }
+          ],
+          temperature: provider.temperature,
+          maxTokens: Math.min(provider.maxTokens, 512),
+          timeoutMs: this.mobilePlugin.settings.requestTimeoutMs
+        });
+      const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
+
+      return `真实请求成功，用时 ${elapsedSeconds} 秒。返回：${response.content.slice(0, 80)}`;
+    } catch (error) {
+      return error instanceof Error ? `真实请求失败：${error.message}` : "真实请求失败。";
+    }
   }
 }
 

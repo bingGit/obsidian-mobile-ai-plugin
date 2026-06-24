@@ -20,6 +20,8 @@ export class ChatView extends ItemView {
   private attachments: ContextAttachment[] = [];
   private sending = false;
   private statusText = "";
+  private statusTimerId: number | null = null;
+  private requestStartedAt = 0;
   private historyOpen = false;
 
   private providerSelectEl!: HTMLSelectElement;
@@ -60,6 +62,7 @@ export class ChatView extends ItemView {
 
   async onClose(): Promise<void> {
     this.controller.cancel();
+    this.stopRequestStatusTimer();
   }
 
   setPrompt(prompt: string): void {
@@ -444,8 +447,7 @@ export class ChatView extends ItemView {
     session.model = model;
     session.messages.push(userMessage);
     this.sending = true;
-    this.statusText = "正在整理上下文并请求模型...";
-    this.renderMessages();
+    this.startRequestStatusTimer();
     this.render();
 
     try {
@@ -471,7 +473,7 @@ export class ChatView extends ItemView {
       new Notice(toUserMessage(error));
     } finally {
       this.sending = false;
-      this.statusText = "";
+      this.stopRequestStatusTimer();
       this.render();
       if (inputToRestore) {
         this.setPrompt(inputToRestore);
@@ -608,6 +610,26 @@ export class ChatView extends ItemView {
     } catch (error) {
       new Notice(toUserMessage(error));
     }
+  }
+
+  private startRequestStatusTimer(): void {
+    this.stopRequestStatusTimer();
+    this.requestStartedAt = Date.now();
+    this.statusText = "正在整理上下文并请求模型... 已等待 0 秒";
+    this.statusTimerId = window.setInterval(() => {
+      const elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.requestStartedAt) / 1000));
+      this.statusText = `正在等待模型返回... 已等待 ${elapsedSeconds} 秒`;
+      this.render();
+    }, 1000);
+  }
+
+  private stopRequestStatusTimer(): void {
+    if (this.statusTimerId !== null) {
+      window.clearInterval(this.statusTimerId);
+      this.statusTimerId = null;
+    }
+
+    this.statusText = "";
   }
 }
 

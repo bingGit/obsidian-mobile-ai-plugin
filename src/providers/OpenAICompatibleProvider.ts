@@ -94,7 +94,7 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       return {
         ok: true,
-        message: "连接成功。"
+        message: "短连接成功。注意：这只验证 API Key、Base URL 和模型可用，不代表真实长回答不会超时。"
       };
     } catch (error) {
       return {
