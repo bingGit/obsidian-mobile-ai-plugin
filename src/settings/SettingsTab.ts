@@ -205,6 +205,17 @@ export class MobileAiSettingsTab extends PluginSettingTab {
             button.setButtonText("测试连接");
           }))
         .addButton((button) => button
+          .setButtonText("测试 Bridge")
+          .setDisabled(provider.streamTransport !== "websocket-bridge")
+          .onClick(async () => {
+            button.setDisabled(true);
+            button.setButtonText("测试中...");
+            const message = await this.testBridgeConnection(provider);
+            new Notice(message, 15000);
+            button.setDisabled(provider.streamTransport !== "websocket-bridge");
+            button.setButtonText("测试 Bridge");
+          }))
+        .addButton((button) => button
           .setButtonText("测试真实请求")
           .onClick(async () => {
             button.setDisabled(true);
@@ -387,6 +398,22 @@ export class MobileAiSettingsTab extends PluginSettingTab {
     } catch (error) {
       const statusText = statuses.length ? `\n\n状态流转：${statuses.join(" -> ")}` : "";
       return `流式测试失败：\n${toDebugMessage(error)}${statusText}`;
+    }
+  }
+
+  private async testBridgeConnection(provider: ProviderConfig): Promise<string> {
+    if (provider.streamTransport !== "websocket-bridge") {
+      return "当前 Provider 未启用 WebSocket bridge。";
+    }
+
+    try {
+      const result = await this.mobilePlugin.providerRegistry
+        .createProvider(provider)
+        .testConnection(provider, this.mobilePlugin.settings.requestTimeoutMs);
+
+      return result.ok ? result.message : `Bridge 测试失败：${result.message}`;
+    } catch (error) {
+      return error instanceof Error ? `Bridge 测试失败：${error.message}` : "Bridge 测试失败。";
     }
   }
 }

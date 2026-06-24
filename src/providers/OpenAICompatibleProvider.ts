@@ -229,6 +229,21 @@ export class OpenAICompatibleProvider implements AiProvider {
   }
 
   async testConnection(config: ProviderConfig, timeoutMs: number): Promise<TestResult> {
+    if (config.streamTransport === "websocket-bridge") {
+      try {
+        const message = await this.streamBridgeClient.testConnection(config, timeoutMs);
+        return {
+          ok: true,
+          message
+        };
+      } catch (error) {
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : "Bridge 连接失败。"
+        };
+      }
+    }
+
     const model = resolveModel(config);
 
     if (!model) {
