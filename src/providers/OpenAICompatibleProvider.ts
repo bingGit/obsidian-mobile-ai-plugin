@@ -49,8 +49,14 @@ export class OpenAICompatibleProvider implements AiProvider {
   }
 
   async streamChat(request: ChatRequest, onDelta: (text: string) => void): Promise<ChatResponse> {
+    let emittedContent = "";
+    const emitDelta = (text: string) => {
+      emittedContent += text;
+      onDelta(text);
+    };
+
     try {
-      const content = await this.streamChatCompletion(request, onDelta);
+      const content = await this.streamChatCompletionWithFetch(request, emitDelta);
 
       if (!content.trim()) {
         throw new UserFacingError("模型返回为空。");
@@ -60,8 +66,38 @@ export class OpenAICompatibleProvider implements AiProvider {
         content
       };
     } catch (error) {
+      if (emittedContent.trim()) {
+        request.onStatus?.("流式连接中断，已保留已收到内容");
+        return {
+          content: emittedContent
+        };
+      }
+
       if (shouldFallbackToNonStreaming(error)) {
-        request.onStatus?.("流式连接不可用，已自动降级为非流式请求");
+        request.onStatus?.("fetch 流式连接不可用，正在尝试 XHR 流式通道");
+
+        try {
+          const xhrContent = await this.streamChatCompletionWithXhr(request, emitDelta);
+
+          if (xhrContent.trim()) {
+            return {
+              content: xhrContent
+            };
+          }
+        } catch (xhrError) {
+          if (emittedContent.trim()) {
+            request.onStatus?.("XHR 流式连接中断，已保留已收到内容");
+            return {
+              content: emittedContent
+            };
+          }
+
+          if (!shouldFallbackToNonStreaming(xhrError)) {
+            throw xhrError;
+          }
+        }
+
+        request.onStatus?.("流式通道不可用，已自动降级为非流式请求");
         return this.sendChat({
           ...request,
           config: {
@@ -185,7 +221,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     return response.json;
   }
 
-  private async streamChatCompletion(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
+  private async streamChatCompletionWithFetch(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
     const { config } = request;
     const model = request.model.trim() || resolveModel(config);
 
@@ -210,7 +246,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       stream: true
     };
     const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), request.timeoutMs);
+    const idleTimeout = createIdleTimeout(request.timeoutMs, () => controller.abort());
 
     try {
       const response = await fetch(url, {
@@ -240,7 +276,10 @@ export class OpenAICompatibleProvider implements AiProvider {
         return (await this.sendChat({ ...request, config: { ...config, stream: false } })).content;
       }
 
-      return await readSseStream(response.body, onDelta);
+      return await readSseStream(response.body, (delta) => {
+        idleTimeout.bump();
+        onDelta(delta);
+      });
     } catch (error) {
       if (error instanceof UserFacingError) {
         throw error;
@@ -257,8 +296,113 @@ export class OpenAICompatibleProvider implements AiProvider {
         { label: "原始错误", value: message }
       ]);
     } finally {
-      window.clearTimeout(timeoutId);
+      idleTimeout.clear();
     }
+  }
+
+  private async streamChatCompletionWithXhr(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
+    const { config } = request;
+    const model = request.model.trim() || resolveModel(config);
+
+    if (!config.apiKey.trim()) {
+      throw new UserFacingError("请先配置 API Key。");
+    }
+
+    if (!model) {
+      throw new UserFacingError("请先选择或填写模型。");
+    }
+
+    const url = joinChatCompletionsUrl(config.baseUrl);
+    const body = {
+      model,
+      messages: request.messages,
+      temperature: request.temperature,
+      max_tokens: request.maxTokens,
+      stream: true
+    };
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      let buffer = "";
+      let content = "";
+      let seenLength = 0;
+      const idleTimeout = createIdleTimeout(request.timeoutMs, () => {
+        xhr.abort();
+        reject(new UserFacingError(`流式请求超过 ${request.timeoutMs} 毫秒仍未完成。`, [
+          { label: "请求方法", value: "POST" },
+          { label: "请求 URL", value: url },
+          { label: "模型", value: model },
+          { label: "max_tokens", value: String(request.maxTokens) },
+          { label: "stream", value: "true" },
+          { label: "流式通道", value: "XMLHttpRequest" }
+        ]));
+      });
+
+      xhr.open("POST", url, true);
+      xhr.setRequestHeader("Accept", "text/event-stream");
+      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.setRequestHeader("Authorization", `Bearer ${config.apiKey.trim()}`);
+
+      xhr.onprogress = () => {
+        idleTimeout.bump();
+        const nextText = xhr.responseText.slice(seenLength);
+        seenLength = xhr.responseText.length;
+        const result = readSseText(nextText, buffer, onDelta);
+        buffer = result.buffer;
+        content += result.content;
+      };
+
+      xhr.onload = () => {
+        idleTimeout.clear();
+
+        if (xhr.status < 200 || xhr.status >= 300) {
+          reject(new UserFacingError(`请求失败：${xhr.responseText || `HTTP ${xhr.status}`}`, [
+            { label: "HTTP 状态", value: String(xhr.status) },
+            { label: "响应摘要", value: truncate(xhr.responseText, 2000) },
+            { label: "请求 URL", value: url },
+            { label: "模型", value: model },
+            { label: "max_tokens", value: String(request.maxTokens) },
+            { label: "stream", value: "true" },
+            { label: "流式通道", value: "XMLHttpRequest" }
+          ]));
+          return;
+        }
+
+        if (buffer) {
+          const result = readSseText("\n", buffer, onDelta);
+          content += result.content;
+        }
+
+        resolve(content);
+      };
+
+      xhr.onerror = () => {
+        idleTimeout.clear();
+        reject(new UserFacingError("XMLHttpRequest 流式连接失败。", [
+          { label: "请求方法", value: "POST" },
+          { label: "请求 URL", value: url },
+          { label: "模型", value: model },
+          { label: "max_tokens", value: String(request.maxTokens) },
+          { label: "stream", value: "true" },
+          { label: "流式通道", value: "XMLHttpRequest" },
+          { label: "原始错误", value: "xhr.onerror" }
+        ]));
+      };
+
+      xhr.onabort = () => {
+        idleTimeout.clear();
+        reject(new UserFacingError("XMLHttpRequest 流式连接已中止。", [
+          { label: "请求方法", value: "POST" },
+          { label: "请求 URL", value: url },
+          { label: "模型", value: model },
+          { label: "max_tokens", value: String(request.maxTokens) },
+          { label: "stream", value: "true" },
+          { label: "流式通道", value: "XMLHttpRequest" }
+        ]));
+      };
+
+      xhr.send(JSON.stringify(body));
+    });
   }
 }
 
@@ -283,38 +427,79 @@ async function readSseStream(body: ReadableStream<Uint8Array>, onDelta: (text: s
       break;
     }
 
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split(/\r?\n/);
-    buffer = lines.pop() ?? "";
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      if (!trimmed.startsWith("data:")) {
-        continue;
-      }
-
-      const data = trimmed.slice(5).trim();
-
-      if (!data || data === "[DONE]") {
-        continue;
-      }
-
-      const chunk = JSON.parse(data) as OpenAIStreamChunk;
-      const delta = chunk.choices?.[0]?.delta?.content ?? "";
-
-      if (delta) {
-        content += delta;
-        onDelta(delta);
-      }
-    }
+    const result = readSseText(decoder.decode(value, { stream: true }), buffer, onDelta);
+    buffer = result.buffer;
+    content += result.content;
   }
 
   return content;
 }
 
+function readSseText(
+  text: string,
+  previousBuffer: string,
+  onDelta: (text: string) => void
+): { buffer: string; content: string } {
+  let content = "";
+  const lines = `${previousBuffer}${text}`.split(/\r?\n/);
+  const buffer = lines.pop() ?? "";
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (!trimmed.startsWith("data:")) {
+      continue;
+    }
+
+    const data = trimmed.slice(5).trim();
+
+    if (!data || data === "[DONE]") {
+      continue;
+    }
+
+    const chunk = JSON.parse(data) as OpenAIStreamChunk;
+    const delta = chunk.choices?.[0]?.delta?.content ?? "";
+
+    if (delta) {
+      content += delta;
+      onDelta(delta);
+    }
+  }
+
+  return {
+    buffer,
+    content
+  };
+}
+
 function countMessageCharacters(messages: ChatRequest["messages"]): number {
   return messages.reduce((total, message) => total + message.content.length, 0);
+}
+
+function createIdleTimeout(timeoutMs: number, onTimeout: () => void): { bump: () => void; clear: () => void } {
+  let timeoutId: number | null = null;
+
+  const bump = () => {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+    }
+
+    timeoutId = window.setTimeout(onTimeout, timeoutMs);
+  };
+
+  const clear = () => {
+    if (timeoutId !== null) {
+      window.clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+  };
+
+  bump();
+
+  return {
+    bump,
+    clear
+  };
 }
 
 function shouldFallbackToNonStreaming(error: unknown): boolean {
