@@ -13,6 +13,7 @@ export interface SendInput {
   userInput: string;
   attachments: ContextAttachment[];
   onDelta?: (text: string) => void;
+  onStatus?: (message: string) => void;
 }
 
 export interface SendResult {
@@ -52,7 +53,8 @@ export class ChatController {
       messages: this.buildMessages(input.session, context.prompt),
       temperature: input.provider.temperature,
       maxTokens: input.provider.maxTokens,
-      timeoutMs: this.plugin.settings.requestTimeoutMs
+      timeoutMs: this.plugin.settings.requestTimeoutMs,
+      onStatus: input.onStatus
     };
     const response = input.provider.stream && provider.streamChat
       ? await provider.streamChat(request, (delta) => {

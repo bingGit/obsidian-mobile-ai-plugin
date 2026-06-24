@@ -14,6 +14,7 @@ export interface ChatRequest {
   temperature: number;
   maxTokens: number;
   timeoutMs: number;
+  onStatus?: (message: string) => void;
 }
 
 export interface ChatResponse {

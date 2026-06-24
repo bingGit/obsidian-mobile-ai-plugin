@@ -49,15 +49,30 @@ export class OpenAICompatibleProvider implements AiProvider {
   }
 
   async streamChat(request: ChatRequest, onDelta: (text: string) => void): Promise<ChatResponse> {
-    const content = await this.streamChatCompletion(request, onDelta);
+    try {
+      const content = await this.streamChatCompletion(request, onDelta);
 
-    if (!content.trim()) {
-      throw new UserFacingError("模型返回为空。");
+      if (!content.trim()) {
+        throw new UserFacingError("模型返回为空。");
+      }
+
+      return {
+        content
+      };
+    } catch (error) {
+      if (shouldFallbackToNonStreaming(error)) {
+        request.onStatus?.("流式连接不可用，已自动降级为非流式请求");
+        return this.sendChat({
+          ...request,
+          config: {
+            ...request.config,
+            stream: false
+          }
+        });
+      }
+
+      throw error;
     }
-
-    return {
-      content
-    };
   }
 
   private async postChatCompletionWithRetry(request: ChatRequest): Promise<OpenAIChatResponse> {
@@ -300,4 +315,18 @@ async function readSseStream(body: ReadableStream<Uint8Array>, onDelta: (text: s
 
 function countMessageCharacters(messages: ChatRequest["messages"]): number {
   return messages.reduce((total, message) => total + message.content.length, 0);
+}
+
+function shouldFallbackToNonStreaming(error: unknown): boolean {
+  if (!(error instanceof Error)) {
+    return true;
+  }
+
+  const message = error.message.toLowerCase();
+
+  return message.includes("failed to fetch")
+    || message.includes("networkerror")
+    || message.includes("load failed")
+    || message.includes("cors")
+    || message.includes("abort");
 }

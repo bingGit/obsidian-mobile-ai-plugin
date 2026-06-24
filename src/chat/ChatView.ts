@@ -462,6 +462,10 @@ export class ChatView extends ItemView {
         onDelta: (delta) => {
           assistantMessage.content += delta;
           this.renderMessages();
+        },
+        onStatus: (message) => {
+          this.statusText = message;
+          this.render();
         }
       });
       userMessage.attachments = result.resolvedAttachments;
