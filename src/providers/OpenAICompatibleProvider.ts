@@ -1,6 +1,7 @@
 import type { ProviderApiFormat, ProviderConfig } from "../settings/types";
 import { appendDebugDetails, RetryableNetworkError, UserFacingError } from "../utils/errors";
 import { joinModelApiUrl, requestJson } from "../utils/request";
+import { StreamBridgeClient } from "./StreamBridgeClient";
 import type { AiProvider, ChatRequest, ChatResponse, TestResult } from "./types";
 
 interface OpenAIChoice {
@@ -75,6 +76,7 @@ interface StreamDiagnostics {
 export class OpenAICompatibleProvider implements AiProvider {
   id = "openai-compatible";
   name = "OpenAI Compatible";
+  private readonly streamBridgeClient = new StreamBridgeClient();
 
   async sendChat(request: ChatRequest): Promise<ChatResponse> {
     let data: OpenAIChatResponse | ResponsesApiResponse;
@@ -100,6 +102,21 @@ export class OpenAICompatibleProvider implements AiProvider {
   }
 
   async streamChat(request: ChatRequest, onDelta: (text: string) => void): Promise<ChatResponse> {
+    if (request.config.streamTransport === "websocket-bridge") {
+      request.onStatus?.("正在通过 WebSocket bridge 建立流式连接");
+      const content = await this.streamBridgeClient.stream(request.config, request, onDelta);
+
+      if (!content.trim()) {
+        throw new UserFacingError("Bridge 已连接，但模型返回为空。", [
+          { label: "流式传输", value: "websocket-bridge" }
+        ]);
+      }
+
+      return {
+        content
+      };
+    }
+
     let emittedContent = "";
     const emitDelta = (text: string) => {
       emittedContent += text;

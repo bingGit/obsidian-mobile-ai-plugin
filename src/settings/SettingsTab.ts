@@ -57,6 +57,19 @@ export class MobileAiSettingsTab extends PluginSettingTab {
           }));
 
       new Setting(details)
+        .setName("流式传输")
+        .setDesc("直连适合原生 SSE；WebSocket bridge 适合为移动端补一层稳定流式中转。")
+        .addDropdown((dropdown) => dropdown
+          .addOption("direct", "直连 SSE")
+          .addOption("websocket-bridge", "WebSocket bridge")
+          .setValue(provider.streamTransport)
+          .onChange(async (value) => {
+            provider.streamTransport = value as ProviderConfig["streamTransport"];
+            await this.mobilePlugin.saveSettings();
+            this.display();
+          }));
+
+      new Setting(details)
         .setName("Base URL")
         .setDesc("例如 https://api.example.com/v1。若已包含完整接口路径，插件不会重复拼接。")
         .addText((text) => text
@@ -66,6 +79,33 @@ export class MobileAiSettingsTab extends PluginSettingTab {
             provider.baseUrl = value.trim();
             await this.mobilePlugin.saveSettings();
           }));
+
+      if (provider.streamTransport === "websocket-bridge") {
+        new Setting(details)
+          .setName("Bridge URL")
+          .setDesc("例如 wss://bridge.example.com/stream。插件会把请求转成 WebSocket 消息交给 bridge。")
+          .addText((text) => text
+            .setPlaceholder("wss://bridge.example.com/stream")
+            .setValue(provider.bridgeUrl)
+            .onChange(async (value) => {
+              provider.bridgeUrl = value.trim();
+              await this.mobilePlugin.saveSettings();
+            }));
+
+        new Setting(details)
+          .setName("Bridge Token")
+          .setDesc("可选。若 bridge 需要鉴权，插件会在启动消息里附带 bearer token。")
+          .addText((text) => {
+            text.inputEl.type = "password";
+            text
+              .setPlaceholder("bridge-token")
+              .setValue(provider.bridgeAuthToken)
+              .onChange(async (value) => {
+                provider.bridgeAuthToken = value.trim();
+                await this.mobilePlugin.saveSettings();
+              });
+          });
+      }
 
       new Setting(details)
         .setName("API Key")

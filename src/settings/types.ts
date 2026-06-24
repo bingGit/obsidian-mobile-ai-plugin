@@ -1,4 +1,5 @@
 export type ProviderApiFormat = "chat-completions" | "responses";
+export type StreamTransport = "direct" | "websocket-bridge";
 
 export interface ProviderConfig {
   id: string;
@@ -6,6 +7,9 @@ export interface ProviderConfig {
   baseUrl: string;
   apiKey: string;
   apiFormat: ProviderApiFormat;
+  streamTransport: StreamTransport;
+  bridgeUrl: string;
+  bridgeAuthToken: string;
   defaultModel: string;
   models: string[];
   temperature: number;
@@ -33,6 +37,9 @@ export const DEFAULT_SETTINGS: MobileAiSettings = {
       baseUrl: "",
       apiKey: "",
       apiFormat: "chat-completions",
+      streamTransport: "direct",
+      bridgeUrl: "",
+      bridgeAuthToken: "",
       defaultModel: "",
       models: [],
       temperature: 0.7,
@@ -57,6 +64,9 @@ export function createProviderConfig(): ProviderConfig {
     baseUrl: "",
     apiKey: "",
     apiFormat: "chat-completions",
+    streamTransport: "direct",
+    bridgeUrl: "",
+    bridgeAuthToken: "",
     defaultModel: "",
     models: [],
     temperature: 0.7,
