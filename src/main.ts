@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin, WorkspaceMobileDrawer, type WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin } from "obsidian";
 
 import { ChatStore } from "./chat/ChatStore";
 import { ChatView, VIEW_TYPE_CHAT } from "./chat/ChatView";
@@ -42,48 +42,20 @@ export default class MobileAiCompanionPlugin extends Plugin {
   }
 
   async activateChatView(): Promise<ChatView | null> {
-    let leaf = this.getExistingChatLeaf();
-
-    if (!leaf) {
-      leaf = this.getPreferredLeaf();
-      await leaf.setViewState({
-        type: VIEW_TYPE_CHAT,
-        active: true
-      });
-    }
-
-    this.app.workspace.revealLeaf(leaf);
+    // Obsidian 1.7.2 加入的 ensureSideLeaf: 同一套 API 在 desktop 打开右栏、
+    // mobile 打开右滑 drawer(就是和大纲、 backlinks 同一处), 不用再手动区分
+    // tab / right leaf / WorkspaceMobileDrawer 三种情况, leaf 的获取与创建也
+    // 都由框架处理, 我们只需要在拿到 leaf 之后检查 view 类型。
+    const leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE_CHAT, "right", {
+      active: true,
+      reveal: true
+    });
 
     if (leaf.view instanceof ChatView) {
       return leaf.view;
     }
 
     new Notice("无法打开 Mobile AI 视图。");
-    return null;
-  }
-
-  private getPreferredLeaf(): WorkspaceLeaf {
-    if (Platform.isMobile || Platform.isMobileApp) {
-      return this.app.workspace.getLeaf("tab");
-    }
-
-    return this.app.workspace.getRightLeaf(false) ?? this.app.workspace.getLeaf("tab");
-  }
-
-  private getExistingChatLeaf(): WorkspaceLeaf | null {
-    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT);
-
-    if (!Platform.isMobile && !Platform.isMobileApp) {
-      return leaves[0] ?? null;
-    }
-
-    const mainLeaf = leaves.find((leaf) => !(leaf.parent instanceof WorkspaceMobileDrawer));
-
-    if (mainLeaf) {
-      return mainLeaf;
-    }
-
-    this.app.workspace.detachLeavesOfType(VIEW_TYPE_CHAT);
     return null;
   }
 }
