@@ -440,7 +440,8 @@ export class OpenAICompatibleProvider implements AiProvider {
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      throw new UserFacingError(message, [
+      const userMessage = `${message}${describeLikelyCorsFailure(diagnostics, message)}`;
+      throw new UserFacingError(userMessage, [
         { label: "请求方法", value: "POST" },
         { label: "请求 URL", value: url },
         { label: "模型", value: model },
@@ -526,7 +527,8 @@ export class OpenAICompatibleProvider implements AiProvider {
       }
 
       const message = error instanceof Error ? error.message : String(error);
-      throw new UserFacingError(message, [
+      const userMessage = `${message}${describeLikelyCorsFailure(diagnostics, message)}`;
+      throw new UserFacingError(userMessage, [
         { label: "请求方法", value: "POST" },
         { label: "请求 URL", value: url },
         { label: "模型", value: model },
@@ -1084,6 +1086,24 @@ function summarizeRawResponseHeaders(rawHeaders: string): string {
 
 function looksLikeJsonResponse(contentType: string): boolean {
   return contentType.toLowerCase().includes("application/json");
+}
+
+function looksLikeCorsFailure(diagnostics: StreamDiagnostics, errorMessage: string): boolean {
+  if (diagnostics.bytesReceived > 0 || diagnostics.responseStatus !== "(unknown)") {
+    return false;
+  }
+  const lower = errorMessage.toLowerCase();
+  return lower.includes("failed to fetch")
+    || lower.includes("load failed")
+    || lower.includes("network request failed")
+    || lower.includes("networkerror")
+    || lower.includes("network error");
+}
+
+function describeLikelyCorsFailure(diagnostics: StreamDiagnostics, errorMessage: string): string {
+  return looksLikeCorsFailure(diagnostics, errorMessage)
+    ? "（移动端 0 字节常见于代理 CORS 未配好，参见 docs/mobile-streaming-troubleshooting.md）"
+    : "";
 }
 
 function combineStreamErrors(fetchError: unknown, xhrError: unknown): Error {
