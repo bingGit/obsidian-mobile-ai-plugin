@@ -8,30 +8,24 @@
 }
 
 .mobile-ai-header,
-.mobile-ai-toolbar,
-.mobile-ai-footer-actions,
+.mobile-ai-header-actions,
 .mobile-ai-provider-controls,
-.mobile-ai-header-actions {
+.mobile-ai-composer-row,
+.mobile-ai-attach-popover {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: 6px;
 }
 
 .mobile-ai-header {
   flex: 0 0 auto;
   justify-content: space-between;
-  gap: 6px;
 }
 
 .mobile-ai-provider-controls {
   flex: 1 1 auto;
   min-width: 0;
   gap: 6px;
-}
-
-.mobile-ai-select,
-.mobile-ai-input {
-  width: 100%;
 }
 
 .mobile-ai-select {
@@ -47,43 +41,51 @@
   overflow: auto;
   border: 0;
   border-radius: 0;
-  padding: 2px 2px 8px;
-  background: var(--background-primary);
+  padding: 4px 0;
+  background: transparent;
   overscroll-behavior: contain;
 }
 
+/* Message rows: user / assistant are distinguished by background tint, no
+   text label needed. Padding lives on the inner padding wrapper so the
+   rounded background is visible. */
 .mobile-ai-message {
-  padding: 8px 0;
-  border-bottom: 1px solid var(--background-modifier-border);
+  padding: 0;
+  border: 0;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
-.mobile-ai-message:last-child {
-  border-bottom: 0;
+.mobile-ai-message-inner {
+  padding: 8px 10px;
+  border-radius: 8px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
-.mobile-ai-message-role {
-  color: var(--text-muted);
-  font-size: var(--font-ui-smaller);
-  margin-bottom: 4px;
+.mobile-ai-user .mobile-ai-message-inner {
+  background: var(--background-secondary);
 }
 
-/* Plain-text message bodies (user input, streaming deltas, context/warning
-   lines) keep the original pre-wrap so newlines in the user's typed input
-   and in the AI's delta buffer are preserved on screen. overflow-wrap:anywhere
-   is the standard replacement for the non-standard word-break:break-word and
-   reliably wraps long unbreakable tokens (urls, code, mixed CJK/EN) on
-   mobile webviews. */
+.mobile-ai-assistant .mobile-ai-message-inner {
+  background: transparent;
+}
+
+.mobile-ai-message + .mobile-ai-message {
+  margin-top: 4px;
+}
+
+/* 上下文 / 警告 / 正文: 全部允许文本选择(pre-wrap + overflow-wrap 与原版一致)。 */
 .mobile-ai-message-content,
 .mobile-ai-message-context,
 .mobile-ai-warning {
   white-space: pre-wrap;
   word-break: break-word;
   overflow-wrap: anywhere;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
-/* Markdown-rendered children of .mobile-ai-message-content keep the parent's
-   pre-wrap on direct text nodes but reset the descendant margins so the chat
-   view does not look airy. */
 .mobile-ai-message-content {
   line-height: 1.55;
   min-width: 0;
@@ -127,8 +129,6 @@
   padding-left: 1.4em;
 }
 
-/* MarkdownRenderer wraps <li><p>...</p></li> which would leave an extra 1em
-   gap between list items; collapse the inner <p> margin. */
 .mobile-ai-message-content li > p {
   margin: 0;
 }
@@ -137,8 +137,6 @@
   margin: 1px 0;
 }
 
-/* Code blocks scroll horizontally inside the chat view instead of pushing
-   the whole view sideways. */
 .mobile-ai-message-content pre {
   max-width: 100%;
   overflow-x: auto;
@@ -159,8 +157,6 @@
   overflow-wrap: normal;
 }
 
-/* Tables are also rendered as a block that scrolls horizontally rather
-   than overflowing the chat width. */
 .mobile-ai-message-content table {
   display: block;
   max-width: 100%;
@@ -305,6 +301,8 @@
   font-size: var(--font-ui-small);
 }
 
+/* Composer: 一行排开。左侧附件按钮(点击展开 popover) + 中间自动撑高的输入框
+   + 右侧发送/停止按钮。三者 flex 排在同一行, 高度对齐到 input 当前高度。 */
 .mobile-ai-composer {
   flex: 0 0 auto;
   display: flex;
@@ -312,10 +310,83 @@
   gap: 6px;
 }
 
+.mobile-ai-composer-row {
+  position: relative;
+  align-items: flex-end;
+}
+
 .mobile-ai-input {
-  min-height: 72px;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
   max-height: 30vh;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
+  line-height: 1.45;
+  padding: 8px 10px;
+}
+
+.mobile-ai-send-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  padding: 0;
+}
+
+.mobile-ai-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+/* 附件 popover: 浮在附件按钮上方, 默认收起。 */
+.mobile-ai-attach-popover {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 180px;
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  z-index: 10;
+  display: none;
+}
+
+.mobile-ai-attach-popover.is-open {
+  display: flex;
+}
+
+.mobile-ai-attach-popover button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.mobile-ai-attach-popover button:hover {
+  background: var(--background-modifier-hover);
 }
 
 .mobile-ai-suggestions {
@@ -340,23 +411,4 @@
   padding: 8px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 8px;
-}
-
-.mobile-ai-icon-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  min-width: 34px;
-  height: 34px;
-  min-height: 34px;
-  padding: 0;
-}
-
-.mobile-ai-toolbar {
-  justify-content: flex-end;
-}
-
-.mobile-ai-toolbar .mobile-ai-icon-button:nth-child(3) {
-  margin-left: auto;
 }

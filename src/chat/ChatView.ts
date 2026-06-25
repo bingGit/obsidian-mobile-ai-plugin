@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Notice, setIcon, type TFile, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, Platform, setIcon, type TFile, type WorkspaceLeaf } from "obsidian";
 
 import type MobileAiCompanionPlugin from "../main";
 import { FileSuggest } from "../context/FileSuggest";
@@ -153,18 +153,115 @@ export class ChatView extends ItemView {
 
     const composerEl = containerEl.createDiv("mobile-ai-composer");
     this.suggestionEl = composerEl.createDiv("mobile-ai-suggestions");
-    this.inputEl = composerEl.createEl("textarea", {
+
+    const composerRow = composerEl.createDiv("mobile-ai-composer-row");
+    this.renderAttachControl(composerRow);
+    this.renderSendControl(composerRow);
+
+    this.inputEl = composerRow.createEl("textarea", {
       cls: "mobile-ai-input",
       attr: {
-        rows: "4",
+        rows: "1",
         placeholder: "问当前笔记，或输入 @ 搜索 vault 内 Markdown 文件"
       }
     });
-    this.inputEl.addEventListener("input", () => this.renderSuggestions());
+    // Auto-resize: input 时先把 height 置为 auto 让 scrollHeight 反映真实内容,
+    // 再写回 scrollHeight, 由 CSS max-height 兜底防止撑爆视口。
+    this.inputEl.addEventListener("input", () => {
+      this.inputEl.style.height = "auto";
+      this.inputEl.style.height = `${this.inputEl.scrollHeight}px`;
+      this.renderSuggestions();
+    });
     this.inputEl.addEventListener("keyup", () => this.renderSuggestions());
     this.inputEl.addEventListener("click", () => this.renderSuggestions());
+  }
 
-    this.renderToolbar(composerEl);
+  private renderAttachControl(rowEl: HTMLElement): void {
+    // 单个附件按钮 + 上方弹出的 popover, 取代原来 toolbar 里的两个独立按钮,
+    // 节约横向空间, 移动端一屏能装下 input + send。
+    const attachButton = rowEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "添加上下文",
+        title: "添加上下文"
+      }
+    });
+    setIcon(attachButton, "paperclip");
+
+    const popover = rowEl.createDiv("mobile-ai-attach-popover");
+
+    const currentItem = popover.createEl("button", {
+      attr: { "aria-label": "添加当前文件" }
+    });
+    setIcon(currentItem, "file-text");
+    currentItem.createSpan({ text: "添加当前文件" });
+    currentItem.addEventListener("click", () => {
+      this.addCurrentFileAttachment();
+      popover.removeClass("is-open");
+    });
+
+    const selectionItem = popover.createEl("button", {
+      attr: { "aria-label": "添加选中文本" }
+    });
+    setIcon(selectionItem, "text-select");
+    selectionItem.createSpan({ text: "添加选中文本" });
+    selectionItem.addEventListener("click", () => {
+      this.addSelectionAttachment();
+      popover.removeClass("is-open");
+    });
+
+    attachButton.addEventListener("click", (event) => {
+      // 阻止冒泡, 配合 document 上的关闭监听避免"刚展开就被关掉"。
+      event.stopPropagation();
+      popover.toggleClass("is-open", !popover.hasClass("is-open"));
+    });
+
+    // 点击 popover 外部任意位置关闭。listener 每次打开时挂一次, 关闭后清掉。
+    const closeOnOutside = (event: MouseEvent) => {
+      if (!popover.contains(event.target as Node) && event.target !== attachButton) {
+        popover.removeClass("is-open");
+        document.removeEventListener("click", closeOnOutside);
+      }
+    };
+    const observer = new MutationObserver(() => {
+      if (popover.hasClass("is-open")) {
+        document.addEventListener("click", closeOnOutside);
+      } else {
+        document.removeEventListener("click", closeOnOutside);
+      }
+    });
+    observer.observe(popover, { attributes: true, attributeFilter: ["class"] });
+  }
+
+  private renderSendControl(rowEl: HTMLElement): void {
+    const sendButton = rowEl.createEl("button", {
+      cls: "mobile-ai-send-button mod-cta",
+      attr: {
+        "aria-label": this.sending ? "发送中" : "发送",
+        title: this.sending ? "发送中" : "发送"
+      }
+    });
+    setIcon(sendButton, "send");
+    sendButton.disabled = this.sending;
+    sendButton.addEventListener("click", () => {
+      void this.handleSend();
+    });
+
+    const stopButton = rowEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "停止生成",
+        title: "停止生成"
+      }
+    });
+    setIcon(stopButton, "square");
+    stopButton.disabled = !this.sending;
+    stopButton.addEventListener("click", () => {
+      this.controller.cancel();
+      this.sending = false;
+      new Notice("已请求停止，当前网络请求返回后会被忽略。");
+      this.render();
+    });
   }
 
   private renderHeader(parentEl: HTMLElement): void {
@@ -212,6 +309,44 @@ export class ChatView extends ItemView {
       this.attachments = [];
       this.render();
     });
+
+    // 全屏按钮: mobile 走 drawer.expand() 让右滑面板铺满, desktop 走 getLeaf("window")
+    // 把视图弹到独立窗口方便用户自己拉大/移到第二屏。
+    const fullscreenButton = actionsEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "全屏",
+        title: "全屏"
+      }
+    });
+    setIcon(fullscreenButton, "maximize-2");
+    fullscreenButton.addEventListener("click", () => {
+      this.openFullscreen();
+    });
+  }
+
+  private openFullscreen(): void {
+    // 现状: 在 mobile 上, chat 已经在右滑 drawer 里, 抽屉展开就是全屏;
+    //       在 desktop 上, chat 在右栏, 没法让它"占满主区"而又不破坏当前
+    //       工作区布局(那需要 detach 到独立窗口并把 session 串过去, 是另一个
+    //       改动面)。所以目前 mobile 抽屉展开, desktop 暂时是 no-op。
+    if (!Platform.isMobile && !Platform.isMobileApp) {
+      return;
+    }
+
+    const parent: unknown = this.leaf?.parent ?? null;
+    let candidate: unknown = parent;
+    while (candidate) {
+      const drawerLike = candidate as { expand?: () => void; collapsed?: boolean };
+      if (typeof drawerLike.expand === "function" && typeof drawerLike.collapsed === "boolean") {
+        drawerLike.expand();
+        return;
+      }
+      candidate = (candidate as { parent?: unknown }).parent ?? null;
+    }
+
+    // 兜底: 找不到 drawer 祖先时, 重新走一次 ensureSideLeaf 让框架 reveal。
+    void this.plugin.activateChatView();
   }
 
   private renderModelSelect(parentEl: HTMLElement): void {
@@ -255,59 +390,6 @@ export class ChatView extends ItemView {
     }
   }
 
-  private renderToolbar(parentEl: HTMLElement): void {
-    const toolbarEl = parentEl.createDiv("mobile-ai-toolbar");
-
-    const currentButton = toolbarEl.createEl("button", {
-      cls: "mobile-ai-icon-button",
-      attr: {
-        "aria-label": "添加当前文件",
-        title: "添加当前文件"
-      }
-    });
-    setIcon(currentButton, "file-text");
-    currentButton.addEventListener("click", () => this.addCurrentFileAttachment());
-
-    const selectionButton = toolbarEl.createEl("button", {
-      cls: "mobile-ai-icon-button",
-      attr: {
-        "aria-label": "添加选中文本",
-        title: "添加选中文本"
-      }
-    });
-    setIcon(selectionButton, "text-select");
-    selectionButton.addEventListener("click", () => this.addSelectionAttachment());
-
-    const sendButton = toolbarEl.createEl("button", {
-      cls: "mobile-ai-icon-button mod-cta",
-      attr: {
-        "aria-label": this.sending ? "发送中" : "发送",
-        title: this.sending ? "发送中" : "发送"
-      }
-    });
-    setIcon(sendButton, "send");
-    sendButton.disabled = this.sending;
-    sendButton.addEventListener("click", () => {
-      void this.handleSend();
-    });
-
-    const stopButton = toolbarEl.createEl("button", {
-      cls: "mobile-ai-icon-button",
-      attr: {
-        "aria-label": "停止生成",
-        title: "停止生成"
-      }
-    });
-    setIcon(stopButton, "square");
-    stopButton.disabled = !this.sending;
-    stopButton.addEventListener("click", () => {
-      this.controller.cancel();
-      this.sending = false;
-      new Notice("已请求停止，当前网络请求返回后会被忽略。");
-      this.render();
-    });
-  }
-
   private async renderMessages(): Promise<void> {
     this.messageListEl.empty();
     const session = this.ensureSession();
@@ -321,23 +403,22 @@ export class ChatView extends ItemView {
     }
 
     for (const message of session.messages) {
+      // 不再创建"你 / AI"角色标签 div, 改用 .mobile-ai-user / .mobile-ai-assistant
+      // 修饰的 .mobile-ai-message-inner 背景色块来区分, 视觉上一眼能分清。
       const messageEl = this.messageListEl.createDiv(`mobile-ai-message mobile-ai-${message.role}`);
-      messageEl.createDiv({
-        cls: "mobile-ai-message-role",
-        text: message.role === "user" ? "你" : "AI"
-      });
+      const innerEl = messageEl.createDiv("mobile-ai-message-inner");
 
       if (message.attachments?.length) {
-        const attachmentEl = messageEl.createDiv("mobile-ai-message-context");
+        const attachmentEl = innerEl.createDiv("mobile-ai-message-context");
         attachmentEl.setText(`上下文：${message.attachments.map((item) => item.label).join("、")}`);
       }
 
       if (message.warnings?.length) {
-        const warningEl = messageEl.createDiv("mobile-ai-warning");
+        const warningEl = innerEl.createDiv("mobile-ai-warning");
         warningEl.setText(message.warnings.join(" "));
       }
 
-      const contentEl = messageEl.createDiv("mobile-ai-message-content");
+      const contentEl = innerEl.createDiv("mobile-ai-message-content");
 
       if (message.role === "assistant") {
         if (message.id === this.streamingMessageId) {
@@ -360,7 +441,7 @@ export class ChatView extends ItemView {
       }
 
       if (message.role === "assistant" && message.content) {
-        this.renderMessageActions(messageEl, message.content, message.toolCalls);
+        this.renderMessageActions(innerEl, message.content, message.toolCalls);
       }
     }
 
@@ -444,7 +525,7 @@ export class ChatView extends ItemView {
     toolCalls?: Array<{ name: string; summary: string; ok: boolean }>
   ): void {
     if (toolCalls && toolCalls.length > 0) {
-      this.renderToolCalls(messageEl, toolCalls);
+      this.renderToolCalls(innerEl, toolCalls);
     }
 
     const actionsEl = messageEl.createDiv("mobile-ai-message-actions");

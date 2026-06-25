@@ -5,6 +5,15 @@ All notable changes to Mobile AI Companion are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.22] - 2026-06-25
+
+### Changed (mobile chat UI rework)
+- **User / AI message distinction by background tint, not text label.** Removed the "你" / "AI" role label div from `renderMessages`. Each message is now wrapped in a `.mobile-ai-message-inner` block; user messages get a subtle `var(--background-secondary)` background, assistant messages stay on the default background. No more reading "AI said this, you said that" — the colored block itself is the cue.
+- **Compact composer.** The four-button bottom toolbar (current file / selection / send / stop) is gone. Replaced with a single row: `[paperclip] [textarea, auto-grow] [send]`. The paperclip opens a small popover above it containing the two attachment options ("添加当前文件" / "添加选中文本"). Send and stop still toggle based on `this.sending`.
+- **Auto-resize textarea.** The input starts at one line of height (`min-height: 38px`), grows with the content as the user types, and stops at `max-height: 30vh` (with internal scrollbar if exceeded). `resize: vertical` is gone — auto-grow handles it.
+- **Fullscreen button** in the header (`maximize-2` icon). On mobile it walks up the leaf's parent chain looking for a `WorkspaceMobileDrawer` / `WorkspaceSidedock` and calls `expand()` on it, so a previously collapsed right drawer is re-expanded to fullscreen. On desktop the button is currently a no-op (popping the chat out to its own workspace window would also need to thread `sessionId` through the leaf state — separate piece of work if you want it).
+- **`user-select: text` is now explicit** on `.mobile-ai-message`, `.mobile-ai-message-inner`, `.mobile-ai-message-content`, `.mobile-ai-message-context`, and `.mobile-ai-warning`. Mobile webviews can occasionally inherit a `user-select: none` from the host theme; this forces selection to work on every part of both user and assistant messages, so a specific sentence can be long-pressed and copied without having to copy the whole message.
+
 ## [Unreleased]
 
 ## [0.1.21] - 2026-06-25
@@ -74,7 +83,8 @@ Without those changes, the model still can't write files even with v0.1.18.
 - Chat message vertical spacing tightened.
 - Chat content is now contained inside the panel so it no longer overflows horizontally on mobile.
 
-[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.21...HEAD
+[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.22...HEAD
+[0.1.22]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.21...v0.1.22
 [0.1.21]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.20...v0.1.21
 [0.1.20]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.19...v0.1.20
 [0.1.19]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.18...v0.1.19
