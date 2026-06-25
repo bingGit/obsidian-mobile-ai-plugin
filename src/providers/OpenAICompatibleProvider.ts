@@ -7,6 +7,26 @@ import type { AiProvider, ChatRequest, ChatResponse, TestResult } from "./types"
 interface OpenAIChoice {
   message?: {
     content?: string;
+    tool_calls?: OpenAIToolCall[];
+  };
+}
+
+interface OpenAIToolCall {
+  id?: string;
+  type?: "function";
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+}
+
+interface OpenAIStreamToolCallDelta {
+  index?: number;
+  id?: string;
+  type?: "function";
+  function?: {
+    name?: string;
+    arguments?: string;
   };
 }
 
@@ -24,6 +44,7 @@ interface OpenAIChatResponse extends OpenAIErrorResponse {
 interface OpenAIStreamChoice {
   delta?: {
     content?: string;
+    tool_calls?: OpenAIStreamToolCallDelta[];
   };
 }
 
@@ -81,6 +102,7 @@ export class OpenAICompatibleProvider implements AiProvider {
   async sendChat(request: ChatRequest): Promise<ChatResponse> {
     let data: OpenAIChatResponse | ResponsesApiResponse;
     let content = "";
+    let toolCalls: OpenAIToolCall[] | undefined;
 
     if (request.config.apiFormat === "responses") {
       data = await this.postResponsesWithRetry(request);
@@ -89,14 +111,19 @@ export class OpenAICompatibleProvider implements AiProvider {
       const chatData = await this.postChatCompletionWithRetry(request);
       data = chatData;
       content = chatData.choices?.[0]?.message?.content?.trim() ?? "";
+      const rawCalls = chatData.choices?.[0]?.message?.tool_calls;
+      if (rawCalls && rawCalls.length > 0) {
+        toolCalls = rawCalls;
+      }
     }
 
-    if (!content) {
+    if (!content && !toolCalls) {
       throw new UserFacingError("模型返回为空。");
     }
 
     return {
       content,
+      toolCalls: toolCalls?.map(toOpenAIToolCall),
       raw: data
     };
   }
@@ -125,16 +152,17 @@ export class OpenAICompatibleProvider implements AiProvider {
 
     try {
       request.onStatus?.(`正在建立 ${request.config.apiFormat === "responses" ? "Responses" : "Chat Completions"} 流式连接`);
-      const content = request.config.apiFormat === "responses"
+      const result = request.config.apiFormat === "responses"
         ? await this.streamResponsesWithFetch(request, emitDelta)
         : await this.streamChatCompletionWithFetch(request, emitDelta);
 
-      if (!content.trim()) {
+      if (!result.content.trim() && !result.toolCalls.length) {
         throw new UserFacingError("模型返回为空。");
       }
 
       return {
-        content
+        content: result.content,
+        toolCalls: result.toolCalls
       };
     } catch (error) {
       if (emittedContent.trim()) {
@@ -146,16 +174,17 @@ export class OpenAICompatibleProvider implements AiProvider {
       request.onStatus?.("fetch 流式连接失败，正在尝试 XHR 流式通道");
 
       try {
-        const xhrContent = request.config.apiFormat === "responses"
+        const xhrResult = request.config.apiFormat === "responses"
           ? await this.streamResponsesWithXhr(request, emitDelta)
           : await this.streamChatCompletionWithXhr(request, emitDelta);
 
-        if (!xhrContent.trim()) {
+        if (!xhrResult.content.trim() && !xhrResult.toolCalls.length) {
           throw new UserFacingError("流式通道已建立，但没有收到可用内容。");
         }
 
         return {
-          content: xhrContent
+          content: xhrResult.content,
+          toolCalls: xhrResult.toolCalls
         };
       } catch (xhrError) {
         if (emittedContent.trim()) {
@@ -301,10 +330,7 @@ export class OpenAICompatibleProvider implements AiProvider {
         Authorization: `Bearer ${config.apiKey.trim()}`
       },
       body: {
-        model,
-        messages: request.messages,
-        temperature: request.temperature,
-        max_tokens: request.maxTokens,
+        ...buildChatCompletionsBody(request),
         stream: false
       }
     });
@@ -362,7 +388,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     return response.json;
   }
 
-  private async streamChatCompletionWithFetch(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
+  private async streamChatCompletionWithFetch(request: ChatRequest, onDelta: (text: string) => void): Promise<{ content: string; toolCalls: OpenAIToolCall[] }> {
     const { config } = request;
     const model = request.model.trim() || resolveModel(config);
 
@@ -384,13 +410,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
 
     const url = joinModelApiUrl(config.baseUrl, "chat-completions");
-    const body = {
-      model,
-      messages: request.messages,
-      temperature: request.temperature,
-      max_tokens: request.maxTokens,
-      stream: true
-    };
+    const body = buildChatCompletionsBody(request);
     const controller = new AbortController();
     const idleTimeout = createIdleTimeout(request.timeoutMs, () => controller.abort());
     const diagnostics = createStreamDiagnostics("chat-completions", "fetch");
@@ -431,9 +451,11 @@ export class OpenAICompatibleProvider implements AiProvider {
         throw new UserFacingError("流式请求返回了 JSON，而不是事件流。", buildStreamDebugDetails(diagnostics));
       }
 
-      return await readSseStream(response.body, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta), () => {
+      const toolCallState = createToolCallAccumulator();
+      const content = await readSseStream(response.body, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta, toolCallState), () => {
         idleTimeout.bump();
       });
+      return { content, toolCalls: finalizeToolCalls(toolCallState) };
     } catch (error) {
       if (error instanceof UserFacingError) {
         throw appendDebugDetails(error, buildStreamDebugDetails(diagnostics));
@@ -543,7 +565,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
   }
 
-  private async streamChatCompletionWithXhr(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
+  private async streamChatCompletionWithXhr(request: ChatRequest, onDelta: (text: string) => void): Promise<{ content: string; toolCalls: OpenAIToolCall[] }> {
     const { config } = request;
     const model = request.model.trim() || resolveModel(config);
 
@@ -556,13 +578,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
 
     const url = joinModelApiUrl(config.baseUrl, "chat-completions");
-    const body = {
-      model,
-      messages: request.messages,
-      temperature: request.temperature,
-      max_tokens: request.maxTokens,
-      stream: true
-    };
+    const body = buildChatCompletionsBody(request);
     const diagnostics = createStreamDiagnostics("chat-completions", "XMLHttpRequest");
 
     return new Promise((resolve, reject) => {
@@ -570,6 +586,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       let buffer = "";
       let content = "";
       let seenLength = 0;
+      const toolCallState = createToolCallAccumulator();
       const idleTimeout = createIdleTimeout(request.timeoutMs, () => {
         xhr.abort();
         reject(new UserFacingError(buildIdleTimeoutMessage(request.timeoutMs, diagnostics), [
@@ -595,7 +612,7 @@ export class OpenAICompatibleProvider implements AiProvider {
         diagnostics.responseContentType = xhr.getResponseHeader("content-type") ?? diagnostics.responseContentType;
         const nextText = xhr.responseText.slice(seenLength);
         seenLength = xhr.responseText.length;
-        const result = readSseText(nextText, buffer, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta));
+        const result = readSseText(nextText, buffer, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta, toolCallState));
         buffer = result.buffer;
         content += result.content;
       };
@@ -618,16 +635,17 @@ export class OpenAICompatibleProvider implements AiProvider {
         }
 
         if (buffer) {
-          const result = readSseText("\n\n", buffer, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta));
+          const result = readSseText("\n\n", buffer, diagnostics, (event) => parseChatCompletionsStreamEvent(event, onDelta, toolCallState));
           content += result.content;
         }
 
-        if (!content.trim() && looksLikeJsonResponse(diagnostics.responseContentType)) {
+        const toolCalls = finalizeToolCalls(toolCallState);
+        if (!content.trim() && !toolCalls.length && looksLikeJsonResponse(diagnostics.responseContentType)) {
           reject(new UserFacingError("XHR 流式请求返回了 JSON，而不是事件流。", buildStreamDebugDetails(diagnostics)));
           return;
         }
 
-        resolve(content);
+        resolve({ content, toolCalls });
       };
 
       xhr.onerror = () => {
@@ -890,12 +908,40 @@ function parseSseEvent(chunkText: string): SseEvent | null {
   };
 }
 
-function parseChatCompletionsStreamEvent(event: SseEvent, onDelta: (text: string) => void): string {
+function parseChatCompletionsStreamEvent(
+  event: SseEvent,
+  onDelta: (text: string) => void,
+  toolCallState: ToolCallAccumulator
+): string {
   const chunk = JSON.parse(event.data) as OpenAIStreamChunk;
-  const delta = chunk.choices?.[0]?.delta?.content ?? "";
+  const choice = chunk.choices?.[0];
+  const delta = choice?.delta?.content ?? "";
 
   if (delta) {
     onDelta(delta);
+  }
+
+  // OpenAI 把同一个 tool_call 切成多块流式发出：先来 {id, type, function.name, function.arguments:""}
+  // 后续分多次增量补 arguments。按 index 累积到 toolCallState, 最后一次性产出完整 ToolCall。
+  const toolCallDeltas = choice?.delta?.tool_calls;
+  if (toolCallDeltas && toolCallDeltas.length > 0) {
+    for (const tcDelta of toolCallDeltas) {
+      const idx = tcDelta.index ?? 0;
+      let existing = toolCallState.byIndex.get(idx);
+      if (!existing) {
+        existing = {
+          id: tcDelta.id || "",
+          type: "function",
+          function: { name: tcDelta.function?.name || "", arguments: "" }
+        };
+        toolCallState.byIndex.set(idx, existing);
+      }
+      if (tcDelta.id) existing.id = tcDelta.id;
+      if (tcDelta.function?.name) existing.function.name = tcDelta.function.name;
+      if (tcDelta.function?.arguments) {
+        existing.function.arguments += tcDelta.function.arguments;
+      }
+    }
   }
 
   return delta;
@@ -953,6 +999,54 @@ function buildResponsesBody(request: ChatRequest, stream: boolean): Record<strin
     max_output_tokens: request.maxTokens,
     stream
   };
+}
+
+// 把内部的 OpenAIToolCall 形态(都是可选字段)转成 ChatResponse 里要求的严格形态。
+// 如果某个字段缺失, 用空字符串占位, 上层(ChatController)会过滤掉无法调用的 tool_call。
+function toOpenAIToolCall(raw: OpenAIToolCall): OpenAIToolCall {
+  return {
+    id: raw.id ?? "",
+    type: "function",
+    function: {
+      name: raw.function?.name ?? "",
+      arguments: raw.function?.arguments ?? ""
+    }
+  };
+}
+
+// 构造 chat-completions 请求体, 集中处理 tools/tool_choice 的可选项。
+// tools 不传就不带这俩字段, 行为与改造前完全一致。
+function buildChatCompletionsBody(request: ChatRequest): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: request.model,
+    messages: request.messages,
+    temperature: request.temperature,
+    max_tokens: request.maxTokens,
+    stream: true
+  };
+  if (request.tools && request.tools.length > 0) {
+    body.tools = request.tools;
+    if (request.tool_choice !== undefined) {
+      body.tool_choice = request.tool_choice;
+    }
+  }
+  return body;
+}
+
+// 流式解析期间累积 tool_calls 的状态。按 index 组织, 防止同一个 tool 的多块被覆盖。
+interface ToolCallAccumulator {
+  byIndex: Map<number, OpenAIToolCall>;
+}
+
+function createToolCallAccumulator(): ToolCallAccumulator {
+  return { byIndex: new Map() };
+}
+
+function finalizeToolCalls(state: ToolCallAccumulator): OpenAIToolCall[] {
+  return Array.from(state.byIndex.entries())
+    .sort((a, b) => a[0] - b[0])
+    .map(([, tc]) => tc)
+    .filter((tc) => tc.id && tc.function?.name);
 }
 
 function countMessageCharacters(messages: ChatRequest["messages"]): number {

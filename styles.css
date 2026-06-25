@@ -175,6 +175,70 @@
   margin: 4px 0;
 }
 
+/* 工具调用记录, 出现在 AI 消息正文下方, 在 4 个 action 按钮上方。 */
+.mobile-ai-message-toolcalls {
+  margin-top: 6px;
+  padding: 4px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.mobile-ai-message-toolcalls-heading {
+  font-size: var(--font-ui-smaller);
+  color: var(--text-faint);
+  margin-right: 2px;
+}
+
+.mobile-ai-message-toolcall {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 999px;
+  background: var(--background-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.mobile-ai-message-toolcall.is-ok {
+  border-color: var(--background-modifier-border);
+}
+
+.mobile-ai-message-toolcall.is-failed {
+  border-color: var(--text-error);
+  color: var(--text-error);
+}
+
+.mobile-ai-message-toolcall-icon {
+  font-weight: 600;
+}
+
+.mobile-ai-message-toolcall-name {
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.mobile-ai-message-toolcall.is-failed .mobile-ai-message-toolcall-name {
+  color: var(--text-error);
+}
+
+.mobile-ai-message-toolcall-summary {
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-ai-message-toolcall.is-failed .mobile-ai-message-toolcall-summary {
+  color: var(--text-error);
+}
+
 .mobile-ai-message-actions {
   display: flex;
   justify-content: flex-end;

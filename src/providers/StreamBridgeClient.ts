@@ -2,6 +2,15 @@ import type { ProviderApiFormat, ProviderConfig } from "../settings/types";
 import { UserFacingError } from "../utils/errors";
 import type { ChatRequest } from "./types";
 
+interface OpenAIToolCall {
+  id?: string;
+  type?: "function";
+  function?: {
+    name?: string;
+    arguments?: string;
+  };
+}
+
 interface BridgeStartPayload {
   type: "start";
   request: {
@@ -125,7 +134,7 @@ export class StreamBridgeClient {
     config: ProviderConfig,
     request: ChatRequest,
     onDelta: (text: string) => void
-  ): Promise<string> {
+  ): Promise<{ content: string; toolCalls: OpenAIToolCall[] }> {
     const bridgeUrl = config.bridgeUrl.trim();
 
     if (!bridgeUrl) {
@@ -179,7 +188,8 @@ export class StreamBridgeClient {
             temperature: request.temperature,
             maxTokens: request.maxTokens,
             messages: request.messages,
-            timeoutMs: request.timeoutMs
+            timeoutMs: request.timeoutMs,
+            ...(request.tools && request.tools.length > 0 ? { tools: request.tools } : {})
           }
         };
 
@@ -227,7 +237,7 @@ export class StreamBridgeClient {
               onDelta(tail);
             }
 
-            finish(() => resolve(content));
+            finish(() => resolve({ content, toolCalls: [] }));
             return;
           }
 

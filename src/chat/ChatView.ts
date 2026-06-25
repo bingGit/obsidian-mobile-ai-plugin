@@ -352,7 +352,7 @@ export class ChatView extends ItemView {
       }
 
       if (message.role === "assistant" && message.content) {
-        this.renderMessageActions(messageEl, message.content);
+        this.renderMessageActions(messageEl, message.content, message.toolCalls);
       }
     }
 
@@ -430,7 +430,15 @@ export class ChatView extends ItemView {
     }
   }
 
-  private renderMessageActions(messageEl: HTMLElement, content: string): void {
+  private renderMessageActions(
+    messageEl: HTMLElement,
+    content: string,
+    toolCalls?: Array<{ name: string; summary: string; ok: boolean }>
+  ): void {
+    if (toolCalls && toolCalls.length > 0) {
+      this.renderToolCalls(messageEl, toolCalls);
+    }
+
     const actionsEl = messageEl.createDiv("mobile-ai-message-actions");
 
     const copyButton = actionsEl.createEl("button", {
@@ -480,6 +488,26 @@ export class ChatView extends ItemView {
     appendButton.addEventListener("click", () => {
       void this.runAsyncNoteAction(() => this.editorActions.appendToCurrentFile(content));
     });
+  }
+
+  private renderToolCalls(
+    messageEl: HTMLElement,
+    toolCalls: Array<{ name: string; summary: string; ok: boolean }>
+  ): void {
+    const listEl = messageEl.createDiv("mobile-ai-message-toolcalls");
+    const heading = listEl.createDiv("mobile-ai-message-toolcalls-heading");
+    heading.setText("工具调用");
+
+    for (const call of toolCalls) {
+      const item = listEl.createDiv("mobile-ai-message-toolcall");
+      item.addClass(call.ok ? "is-ok" : "is-failed");
+      const icon = item.createSpan("mobile-ai-message-toolcall-icon");
+      icon.setText(call.ok ? "✓" : "✗");
+      const name = item.createSpan("mobile-ai-message-toolcall-name");
+      name.setText(call.name);
+      const detail = item.createSpan("mobile-ai-message-toolcall-summary");
+      detail.setText(call.summary);
+    }
   }
 
   private getActiveSourcePath(): string {
@@ -533,11 +561,30 @@ export class ChatView extends ItemView {
         },
         onStatus: (message) => {
           this.setStatusText(message);
+        },
+        onToolCall: (call, result) => {
+          if (!assistantMessage.toolCalls) {
+            assistantMessage.toolCalls = [];
+          }
+          assistantMessage.toolCalls.push({
+            name: call.function.name,
+            summary: result.summary,
+            ok: result.ok
+          });
+          // 工具调用已经改变了文件, 重新渲染消息列表, 让用户看到新内容。
+          // 这次 render 不会丢流式 buffer: 我们在 onDelta 末尾已经写过最新的 content 了。
+          if (this.streamingContentEl) {
+            this.streamingContentEl.textContent = assistantMessage.content;
+            this.scrollMessageListToBottom(false);
+          }
         }
       });
       userMessage.attachments = result.resolvedAttachments;
       userMessage.warnings = result.warnings;
       assistantMessage.content = result.content;
+      assistantMessage.toolCalls = assistantMessage.toolCalls?.length
+        ? assistantMessage.toolCalls
+        : undefined;
       this.streamingMessageId = null;
       this.streamingContentEl = null;
       // Final render: turns the plain-text streaming buffer into a proper

@@ -3,6 +3,16 @@ import type { ContextAttachment } from "../context/types";
 
 export type SessionMessageRole = "user" | "assistant";
 
+export interface SessionToolCall {
+  // 工具名(例如 read_file / write_file / append_to_file)。
+  name: string;
+  // 工具入参的简短描述, 用于 UI 显示。
+  // 不存完整 arguments: 那可能很大且对 UI 无用。
+  summary: string;
+  // 是否成功。
+  ok: boolean;
+}
+
 export interface SessionMessage {
   id: string;
   role: SessionMessageRole;
@@ -10,6 +20,8 @@ export interface SessionMessage {
   createdAt: number;
   attachments?: ContextAttachment[];
   warnings?: string[];
+  // AI 在生成这条消息过程中调用的工具, 按调用顺序。
+  toolCalls?: SessionToolCall[];
 }
 
 export interface ChatSession {
