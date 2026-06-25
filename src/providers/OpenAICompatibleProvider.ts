@@ -131,16 +131,27 @@ export class OpenAICompatibleProvider implements AiProvider {
   async streamChat(request: ChatRequest, onDelta: (text: string) => void): Promise<ChatResponse> {
     if (request.config.streamTransport === "websocket-bridge") {
       request.onStatus?.("正在通过 WebSocket bridge 建立流式连接");
-      const content = await this.streamBridgeClient.stream(request.config, request, onDelta);
+      const bridgeResult = await this.streamBridgeClient.stream(request.config, request, onDelta);
 
-      if (!content.trim()) {
+      // 诊断日志: 让你在 dev console 里直接看到 tools 是否进请求体、响应是否带 tool_calls。
+      // 仅 devtools 可见, 不打扰用户; 用于定位"AI 说没权限"的根因。
+      // eslint-disable-next-line no-console
+      console.log("[mobile-ai] bridge result", {
+        hasTools: Boolean(request.tools && request.tools.length > 0),
+        toolCount: request.tools?.length ?? 0,
+        toolCallCount: bridgeResult.toolCalls.length,
+        toolNames: bridgeResult.toolCalls.map((tc) => tc.function?.name)
+      });
+
+      if (!bridgeResult.content.trim() && bridgeResult.toolCalls.length === 0) {
         throw new UserFacingError("Bridge 已连接，但模型返回为空。", [
           { label: "流式传输", value: "websocket-bridge" }
         ]);
       }
 
       return {
-        content
+        content: bridgeResult.content,
+        toolCalls: bridgeResult.toolCalls.length > 0 ? bridgeResult.toolCalls : undefined
       };
     }
 

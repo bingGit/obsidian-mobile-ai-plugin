@@ -38,6 +38,8 @@ interface BridgeDeltaMessage {
 interface BridgeDoneMessage {
   type: "done";
   text?: string;
+  // 上游流式响应里累积出的 tool_calls。新桥协议字段: 老桥不返回时为空数组。
+  tool_calls?: OpenAIToolCall[];
 }
 
 interface BridgeErrorMessage {
@@ -237,7 +239,10 @@ export class StreamBridgeClient {
               onDelta(tail);
             }
 
-            finish(() => resolve({ content, toolCalls: [] }));
+            // 新桥协议: done 消息里带 tool_calls(累积自上游 stream 的 delta.tool_calls)。
+            // 老桥不返回时, 这里拿到 undefined, 当空数组处理, 行为与改造前一致。
+            const doneCalls = (message.tool_calls ?? []) as OpenAIToolCall[];
+            finish(() => resolve({ content, toolCalls: doneCalls }));
             return;
           }
 
