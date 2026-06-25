@@ -60,8 +60,16 @@ export class ChatView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
-    this.ensureSession();
-    this.render();
+    try {
+      this.ensureSession();
+      this.render();
+    } catch (error) {
+      // 别再静默: 如果视图在 onOpen 阶段抛错(例如 fresh view 重建时
+      // containerEl 结构不符合隐式假设), 至少在 Notice 里告诉用户。
+      // 配合上面改用 this.contentEl, 这里理论上不会再触发, 但留着当保险。
+      console.error("[mobile-ai] onOpen failed", error);
+      new Notice(`Mobile AI 视图初始化失败: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   async onClose(): Promise<void> {
@@ -119,7 +127,7 @@ export class ChatView extends ItemView {
   }
 
   private render(): void {
-    const containerEl = this.containerEl.children[1] as HTMLElement;
+    const containerEl = this.contentEl;
     containerEl.empty();
     containerEl.addClass("mobile-ai-chat-view");
 
