@@ -123,14 +123,12 @@ export class MobileAiSettingsTab extends PluginSettingTab {
 
       new Setting(details)
         .setName("默认模型")
+        .setDesc("只在会话新建时使用，不会自动加到下方常用模型列表里。")
         .addText((text) => text
           .setPlaceholder("claude-3-5-sonnet")
           .setValue(provider.defaultModel)
           .onChange(async (value) => {
             provider.defaultModel = value.trim();
-            if (provider.defaultModel && !provider.models.includes(provider.defaultModel)) {
-              provider.models = [provider.defaultModel, ...provider.models];
-            }
             await this.mobilePlugin.saveSettings();
           }));
 
@@ -149,7 +147,18 @@ export class MobileAiSettingsTab extends PluginSettingTab {
               }
               await this.mobilePlugin.saveSettings();
             });
-        });
+        })
+        .addButton((button) => button
+          .setButtonText("清理")
+          .setTooltip("移除只是其他模型前缀的项（修复输入过程中产生的中间状态），并把默认模型回退到第一个有效项")
+          .onClick(async () => {
+            provider.models = cleanModels(provider.models);
+            if (provider.defaultModel && !provider.models.includes(provider.defaultModel)) {
+              provider.defaultModel = provider.models[0] ?? "";
+            }
+            await this.mobilePlugin.saveSettings();
+            this.display();
+          }));
 
       new Setting(details)
         .setName("Temperature")
@@ -423,6 +432,18 @@ function splitModels(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function cleanModels(models: string[]): string[] {
+  // Drop entries that are only prefixes of other entries. This is the
+  // pollution introduced by the old default-model field that pushed every
+  // intermediate keystroke into provider.models. We keep the longer match
+  // (e.g. "gpt-5.5") and drop the prefix chain ("g", "gp", ..., "gpt-5").
+  const trimmed = models.map((model) => model.trim()).filter(Boolean);
+  const unique = [...new Set(trimmed)];
+  return unique.filter(
+    (model) => !unique.some((other) => other !== model && other.startsWith(model))
+  );
 }
 
 function clampInteger(value: string, min: number, max: number, fallback: number): number {
