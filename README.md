@@ -12,14 +12,19 @@ The plugin is designed around the requirements in [docs/obsidian-mobile-ai-plugi
 
 This project intentionally avoids shell execution, local agents, MCP stdio servers, and vault-wide automatic uploads so it can fit the Obsidian mobile plugin environment.
 
-## Streaming Bridge
+## Streaming transports
 
-Direct SSE streaming on Obsidian mobile can fail even when the upstream provider itself supports streaming.
-This repo now includes a minimal `WebSocket bridge` skeleton so the plugin can forward chat requests to a trusted bridge server and receive token deltas back over WebSocket.
+The plugin supports two streaming transports for chat:
+
+1. **Direct SSE** (default) — the plugin opens a streaming HTTP request from the device to your provider. This is the recommended path on Obsidian mobile as long as the proxy in front of the upstream returns a single matching `Access-Control-Allow-Origin` header.
+2. **WebSocket bridge** — the plugin sends the request to a small bridge server, which opens the streaming HTTP request on its behalf and forwards token deltas back. Use this as a fallback when the proxy chain cannot be made CORS-clean (third-party gateways, restricted networks, etc.).
+
+The most common reason direct streaming fails on mobile is **CORS**, not SSE itself: Obsidian's `requestUrl()` (used for non-streaming) bypasses the WebView CORS checks, but the `fetch` used for streaming does not. See [docs/mobile-streaming-troubleshooting.md](docs/mobile-streaming-troubleshooting.md) for the diagnosis, the nginx + CLIProxyAPI fix recipe, and a curl sanity check.
 
 References:
 
-- protocol: [docs/websocket-bridge-protocol.md](docs/websocket-bridge-protocol.md)
+- mobile CORS troubleshooting: [docs/mobile-streaming-troubleshooting.md](docs/mobile-streaming-troubleshooting.md)
+- bridge protocol: [docs/websocket-bridge-protocol.md](docs/websocket-bridge-protocol.md)
 - runnable bridge: [bridge/server.js](bridge/server.js)
 - bridge setup notes: [bridge/README.md](bridge/README.md)
 

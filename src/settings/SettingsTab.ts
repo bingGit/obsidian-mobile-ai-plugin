@@ -58,7 +58,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
 
       new Setting(details)
         .setName("流式传输")
-        .setDesc("直连适合原生 SSE；WebSocket bridge 适合为移动端补一层稳定流式中转。")
+        .setDesc("默认直连 SSE；只要代理正确返回 Access-Control-Allow-* 头，移动端也能直连。WebSocket bridge 是代理 CORS 不可控时的兜底，详见 docs/mobile-streaming-troubleshooting.md。")
         .addDropdown((dropdown) => dropdown
           .addOption("direct", "直连 SSE")
           .addOption("websocket-bridge", "WebSocket bridge")
