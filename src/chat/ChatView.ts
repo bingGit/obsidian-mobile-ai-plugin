@@ -22,6 +22,13 @@ export class ChatView extends ItemView {
   private statusText = "";
   private statusTimerId: number | null = null;
   private requestStartedAt = 0;
+  // Persisted across renders so status updates do not need a full re-render.
+  private statusEl: HTMLElement | null = null;
+  // The assistant message currently receiving stream deltas, if any.
+  // While set, renderMessages skips MarkdownRenderer for this message and
+  // writes plain text into the cached content element instead.
+  private streamingMessageId: string | null = null;
+  private streamingContentEl: HTMLElement | null = null;
 
   private providerSelectEl!: HTMLSelectElement;
   private modelSelectEl!: HTMLSelectElement;
@@ -116,6 +123,9 @@ export class ChatView extends ItemView {
     containerEl.empty();
     containerEl.addClass("mobile-ai-chat-view");
 
+    // Invalidate the cached streaming node: the DOM is about to be rebuilt.
+    this.streamingContentEl = null;
+
     this.renderHeader(containerEl);
 
     this.messageListEl = containerEl.createDiv("mobile-ai-messages");
@@ -124,9 +134,14 @@ export class ChatView extends ItemView {
     this.attachmentListEl = containerEl.createDiv("mobile-ai-attachments");
     this.renderAttachments();
 
-    const statusEl = containerEl.createDiv("mobile-ai-status");
-    statusEl.toggle(Boolean(this.statusText));
-    statusEl.setText(this.statusText);
+    // Reuse the status node across renders so updates are O(1) text writes.
+    if (!this.statusEl) {
+      this.statusEl = containerEl.createDiv("mobile-ai-status");
+    } else {
+      containerEl.appendChild(this.statusEl);
+    }
+    this.statusEl.toggle(Boolean(this.statusText));
+    this.statusEl.setText(this.statusText);
 
     const composerEl = containerEl.createDiv("mobile-ai-composer");
     this.suggestionEl = composerEl.createDiv("mobile-ai-suggestions");
@@ -317,13 +332,21 @@ export class ChatView extends ItemView {
       const contentEl = messageEl.createDiv("mobile-ai-message-content");
 
       if (message.role === "assistant") {
-        await MarkdownRenderer.render(
-          this.app,
-          message.content || " ",
-          contentEl,
-          this.getActiveSourcePath(),
-          this
-        );
+        if (message.id === this.streamingMessageId) {
+          // Streaming: skip MarkdownRenderer entirely. The node is reused
+          // across deltas via this.streamingContentEl so deltas are O(1)
+          // textContent writes instead of full re-parse + DOM rebuild.
+          contentEl.textContent = message.content || "";
+          this.streamingContentEl = contentEl;
+        } else {
+          await MarkdownRenderer.render(
+            this.app,
+            message.content || " ",
+            contentEl,
+            this.getActiveSourcePath(),
+            this
+          );
+        }
       } else {
         contentEl.setText(message.content);
       }
@@ -333,7 +356,33 @@ export class ChatView extends ItemView {
       }
     }
 
-    this.messageListEl.scrollTop = this.messageListEl.scrollHeight;
+    this.scrollMessageListToBottom(true);
+  }
+
+  private scrollMessageListToBottom(force: boolean): void {
+    if (!this.messageListEl) {
+      return;
+    }
+    if (force) {
+      this.messageListEl.scrollTop = this.messageListEl.scrollHeight;
+      return;
+    }
+    // Only follow along if the user is already near the bottom, so they can
+    // scroll up to read history without being yanked back on every delta.
+    const distance = this.messageListEl.scrollHeight
+      - this.messageListEl.scrollTop
+      - this.messageListEl.clientHeight;
+    if (distance < 64) {
+      this.messageListEl.scrollTop = this.messageListEl.scrollHeight;
+    }
+  }
+
+  private setStatusText(text: string): void {
+    this.statusText = text;
+    if (this.statusEl) {
+      this.statusEl.toggle(Boolean(text));
+      this.statusEl.setText(text);
+    }
   }
 
   private renderAttachments(): void {
@@ -462,6 +511,7 @@ export class ChatView extends ItemView {
     session.messages.push(userMessage);
     session.messages.push(assistantMessage);
     this.sending = true;
+    this.streamingMessageId = assistantMessage.id;
     this.startRequestStatusTimer();
     this.render();
 
@@ -474,16 +524,25 @@ export class ChatView extends ItemView {
         attachments,
         onDelta: (delta) => {
           assistantMessage.content += delta;
-          void this.renderMessages();
+          if (this.streamingContentEl) {
+            this.streamingContentEl.textContent = assistantMessage.content;
+            this.scrollMessageListToBottom(false);
+          }
+          // If streamingContentEl is null, a full render() is in flight and
+          // the next renderMessages() will pick up the updated content.
         },
         onStatus: (message) => {
-          this.statusText = message;
-          this.render();
+          this.setStatusText(message);
         }
       });
       userMessage.attachments = result.resolvedAttachments;
       userMessage.warnings = result.warnings;
       assistantMessage.content = result.content;
+      this.streamingMessageId = null;
+      this.streamingContentEl = null;
+      // Final render: turns the plain-text streaming buffer into a proper
+      // MarkdownRenderer output for the completed message.
+      await this.renderMessages();
       await this.plugin.chatStore.saveSession(session);
       this.inputEl.value = "";
       this.attachments = [];
@@ -491,6 +550,8 @@ export class ChatView extends ItemView {
     } catch (error) {
       session.messages = session.messages.filter((message) => message.id !== userMessage.id && message.id !== assistantMessage.id);
       session.messages.push(createMessage("assistant", toDebugMessage(error)));
+      this.streamingMessageId = null;
+      this.streamingContentEl = null;
       inputToRestore = userInput;
       new Notice(toUserMessage(error));
     } finally {
@@ -640,8 +701,7 @@ export class ChatView extends ItemView {
     this.statusText = "正在整理上下文并请求模型... 已等待 0 秒";
     this.statusTimerId = window.setInterval(() => {
       const elapsedSeconds = Math.max(0, Math.floor((Date.now() - this.requestStartedAt) / 1000));
-      this.statusText = `正在等待模型返回... 已等待 ${elapsedSeconds} 秒`;
-      this.render();
+      this.setStatusText(`正在等待模型返回... 已等待 ${elapsedSeconds} 秒`);
     }, 1000);
   }
 
