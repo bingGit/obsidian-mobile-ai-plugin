@@ -156,6 +156,11 @@ export class StreamBridgeClient {
       const socket = new WebSocket(bridgeUrl);
       let settled = false;
       let content = "";
+      // 跟踪上游 delta 累计量, 用于防御 done.text 与 delta 重复导致内容双倍渲染。
+      // 如果 deltaCount > 0, 视为 delta 是权威流, done.text 只是兜底, 直接丢弃。
+      // 如果 deltaCount === 0, 视为"老式"中转只在 done 一次性回吐全量。
+      let deltaCount = 0;
+      let deltaTextLengthSum = 0;
       const timeoutId = window.setTimeout(() => {
         finish(() => reject(new UserFacingError(`WebSocket bridge 超过 ${request.timeoutMs} 毫秒仍未返回完成事件。`, buildBridgeDebugDetails(diagnostics))));
       }, request.timeoutMs);
@@ -227,6 +232,8 @@ export class StreamBridgeClient {
             const text = message.text ?? "";
             if (text) {
               content += text;
+              deltaCount += 1;
+              deltaTextLengthSum += text.length;
               onDelta(text);
             }
             return;
@@ -234,10 +241,31 @@ export class StreamBridgeClient {
 
           if (message.type === "done") {
             const tail = message.text ?? "";
+
+            // 防御性处理 done.text: 一些中转把整个响应原样塞在 done 里 (delta 推增量、
+            // done 推全量), 直接相加会双倍渲染。判定规则:
+            //   - 如果本次流收过任何 delta, delta 是权威流, done.text 忽略(可能是全量
+            //     重复, 也可能是流截断后的零碎尾巴, 两种都是误用, 宁可丢一点也别双倍)。
+            //   - 如果一条 delta 都没收到, 视为"老式"中转只在 done 一次性回吐全量,
+            //     此时 done.text 就是全部内容, 必须采纳。
             if (tail) {
-              content += tail;
-              onDelta(tail);
+              if (deltaCount === 0) {
+                content = tail;
+                onDelta(tail);
+              }
+              // else: ignore done.text to avoid duplication
             }
+
+            // 诊断日志: 让你在 dev console 里直接看到中转推了多少 delta、done.text 有多长。
+            // 配合防御逻辑: 如果你看到 doneTextLength 很大但 deltaCount > 0, 说明中转
+            // 把全量塞进了 done, plugin 已经自动忽略, 行为仍然正确。
+            // eslint-disable-next-line no-console
+            console.log("[mobile-ai] bridge stream", {
+              deltaCount,
+              deltaTextLengthSum,
+              doneTextLength: tail.length,
+              finalContentLength: content.length
+            });
 
             // 新桥协议: done 消息里带 tool_calls(累积自上游 stream 的 delta.tool_calls)。
             // 老桥不返回时, 这里拿到 undefined, 当空数组处理, 行为与改造前一致。
