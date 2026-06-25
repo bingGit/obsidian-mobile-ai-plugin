@@ -33,10 +33,10 @@ If you see this pattern on multiple attempts, the WebView is aborting the reques
 
 If you control the proxy in front of the upstream (the common case is `nginx → CLIProxyAPI`), make sure the proxy does not emit a second `Access-Control-Allow-Origin` header and that the value matches the request `Origin`. Obsidian typically sends `Origin: http://localhost` because the WebView origin is the vault's local file host.
 
-A minimal `location ^~ /ob/` block:
+A minimal `location ^~ /v1/` block:
 
 ```nginx
-location ^~ /ob/ {
+location ^~ /v1/ {
     # Hide any CORS coming from the upstream so this block owns the response.
     proxy_hide_header Access-Control-Allow-Origin;
     proxy_hide_header Access-Control-Allow-Credentials;
@@ -70,7 +70,7 @@ location ^~ /ob/ {
     add_header Access-Control-Allow-Origin      $http_origin always;
     add_header Access-Control-Allow-Credentials true       always;
 
-    proxy_pass http://127.0.0.1:8317/;
+    proxy_pass http://127.0.0.1:<cliproxy_port>/;
 }
 ```
 
@@ -85,7 +85,7 @@ Sanity-check the response with curl, mimicking the Obsidian origin:
 curl -i \
   -H "Origin: http://localhost" \
   -H "Authorization: Bearer $YOUR_PROXY_KEY" \
-  https://your-host/ob/v1/models
+  https://your-host/v1/models
 ```
 
 You should see exactly one `Access-Control-Allow-Origin` header whose value is `http://localhost`. Then run the same test with a streaming body to confirm the headers are present on `Content-Type: text/event-stream` as well.
@@ -102,7 +102,7 @@ For a self-hosted setup behind `nginx → CLIProxyAPI`:
 
 | Setting | Value |
 |---------|-------|
-| Base URL | `https://your-host/ob/v1` |
+| Base URL | `https://your-host/v1` |
 | API Key | the proxy-side key issued for Obsidian (not the upstream vendor key) |
 | 接口格式 | `Responses API` (preferred) or `Chat Completions` |
 | 流式传输 | `直连 SSE` (default) |
