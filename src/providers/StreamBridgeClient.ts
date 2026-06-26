@@ -1,6 +1,6 @@
 import type { ProviderApiFormat, ProviderConfig } from "../settings/types";
 import { UserFacingError } from "../utils/errors";
-import type { ChatRequest } from "./types";
+import type { ChatRequest, ToolCall } from "./types";
 
 interface OpenAIToolCall {
   id?: string;
@@ -136,7 +136,7 @@ export class StreamBridgeClient {
     config: ProviderConfig,
     request: ChatRequest,
     onDelta: (text: string) => void
-  ): Promise<{ content: string; toolCalls: OpenAIToolCall[] }> {
+  ): Promise<{ content: string; toolCalls: ToolCall[] }> {
     const bridgeUrl = config.bridgeUrl.trim();
 
     if (!bridgeUrl) {
@@ -151,7 +151,7 @@ export class StreamBridgeClient {
       ]);
     }
 
-    return await new Promise<string>((resolve, reject) => {
+    return await new Promise<{ content: string; toolCalls: ToolCall[] }>((resolve, reject) => {
       const diagnostics = createBridgeDiagnostics(bridgeUrl);
       const socket = new WebSocket(bridgeUrl);
       let settled = false;
@@ -269,7 +269,7 @@ export class StreamBridgeClient {
 
             // 新桥协议: done 消息里带 tool_calls(累积自上游 stream 的 delta.tool_calls)。
             // 老桥不返回时, 这里拿到 undefined, 当空数组处理, 行为与改造前一致。
-            const doneCalls = (message.tool_calls ?? []) as OpenAIToolCall[];
+            const doneCalls = (message.tool_calls ?? []).map(toOpenAIToolCall).filter((call) => call.id && call.function.name);
             finish(() => resolve({ content, toolCalls: doneCalls }));
             return;
           }
@@ -313,6 +313,17 @@ export class StreamBridgeClient {
       };
     });
   }
+}
+
+function toOpenAIToolCall(raw: OpenAIToolCall): ToolCall {
+  return {
+    id: raw.id ?? "",
+    type: "function",
+    function: {
+      name: raw.function?.name ?? "",
+      arguments: raw.function?.arguments ?? ""
+    }
+  };
 }
 
 function createBridgeDiagnostics(bridgeUrl: string): BridgeDiagnostics {

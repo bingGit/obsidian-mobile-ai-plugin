@@ -2,7 +2,7 @@ import type { ProviderApiFormat, ProviderConfig } from "../settings/types";
 import { appendDebugDetails, RetryableNetworkError, UserFacingError } from "../utils/errors";
 import { joinModelApiUrl, requestJson } from "../utils/request";
 import { StreamBridgeClient } from "./StreamBridgeClient";
-import type { AiProvider, ChatRequest, ChatResponse, TestResult } from "./types";
+import type { AiProvider, ChatRequest, ChatResponse, TestResult, ToolCall } from "./types";
 
 interface OpenAIChoice {
   message?: {
@@ -94,6 +94,11 @@ interface StreamDiagnostics {
   responseHeaders: string;
 }
 
+interface StreamResult {
+  content: string;
+  toolCalls: ToolCall[];
+}
+
 export class OpenAICompatibleProvider implements AiProvider {
   id = "openai-compatible";
   name = "OpenAI Compatible";
@@ -102,7 +107,7 @@ export class OpenAICompatibleProvider implements AiProvider {
   async sendChat(request: ChatRequest): Promise<ChatResponse> {
     let data: OpenAIChatResponse | ResponsesApiResponse;
     let content = "";
-    let toolCalls: OpenAIToolCall[] | undefined;
+    let toolCalls: ToolCall[] | undefined;
 
     if (request.config.apiFormat === "responses") {
       data = await this.postResponsesWithRetry(request);
@@ -113,7 +118,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       content = chatData.choices?.[0]?.message?.content?.trim() ?? "";
       const rawCalls = chatData.choices?.[0]?.message?.tool_calls;
       if (rawCalls && rawCalls.length > 0) {
-        toolCalls = rawCalls;
+        toolCalls = rawCalls.map(toOpenAIToolCall);
       }
     }
 
@@ -123,7 +128,7 @@ export class OpenAICompatibleProvider implements AiProvider {
 
     return {
       content,
-      toolCalls: toolCalls?.map(toOpenAIToolCall),
+      toolCalls,
       raw: data
     };
   }
@@ -399,7 +404,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     return response.json;
   }
 
-  private async streamChatCompletionWithFetch(request: ChatRequest, onDelta: (text: string) => void): Promise<{ content: string; toolCalls: OpenAIToolCall[] }> {
+  private async streamChatCompletionWithFetch(request: ChatRequest, onDelta: (text: string) => void): Promise<StreamResult> {
     const { config } = request;
     const model = request.model.trim() || resolveModel(config);
 
@@ -489,7 +494,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
   }
 
-  private async streamResponsesWithFetch(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
+  private async streamResponsesWithFetch(request: ChatRequest, onDelta: (text: string) => void): Promise<StreamResult> {
     const { config } = request;
     const model = request.model.trim() || resolveModel(config);
 
@@ -551,9 +556,10 @@ export class OpenAICompatibleProvider implements AiProvider {
         throw new UserFacingError("流式请求返回了 JSON，而不是事件流。", buildStreamDebugDetails(diagnostics));
       }
 
-      return await readSseStream(response.body, diagnostics, (event) => parseResponsesStreamEvent(event, onDelta), () => {
+      const content = await readSseStream(response.body, diagnostics, (event) => parseResponsesStreamEvent(event, onDelta), () => {
         idleTimeout.bump();
       });
+      return { content, toolCalls: [] };
     } catch (error) {
       if (error instanceof UserFacingError) {
         throw appendDebugDetails(error, buildStreamDebugDetails(diagnostics));
@@ -576,7 +582,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     }
   }
 
-  private async streamChatCompletionWithXhr(request: ChatRequest, onDelta: (text: string) => void): Promise<{ content: string; toolCalls: OpenAIToolCall[] }> {
+  private async streamChatCompletionWithXhr(request: ChatRequest, onDelta: (text: string) => void): Promise<StreamResult> {
     const { config } = request;
     const model = request.model.trim() || resolveModel(config);
 
@@ -690,7 +696,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     });
   }
 
-  private async streamResponsesWithXhr(request: ChatRequest, onDelta: (text: string) => void): Promise<string> {
+  private async streamResponsesWithXhr(request: ChatRequest, onDelta: (text: string) => void): Promise<StreamResult> {
     const { config } = request;
     const model = request.model.trim() || resolveModel(config);
 
@@ -767,7 +773,7 @@ export class OpenAICompatibleProvider implements AiProvider {
           return;
         }
 
-        resolve(content);
+        resolve({ content, toolCalls: [] });
       };
 
       xhr.onerror = () => {
@@ -1014,7 +1020,7 @@ function buildResponsesBody(request: ChatRequest, stream: boolean): Record<strin
 
 // 把内部的 OpenAIToolCall 形态(都是可选字段)转成 ChatResponse 里要求的严格形态。
 // 如果某个字段缺失, 用空字符串占位, 上层(ChatController)会过滤掉无法调用的 tool_call。
-function toOpenAIToolCall(raw: OpenAIToolCall): OpenAIToolCall {
+function toOpenAIToolCall(raw: OpenAIToolCall): ToolCall {
   return {
     id: raw.id ?? "",
     type: "function",
@@ -1046,14 +1052,14 @@ function buildChatCompletionsBody(request: ChatRequest): Record<string, unknown>
 
 // 流式解析期间累积 tool_calls 的状态。按 index 组织, 防止同一个 tool 的多块被覆盖。
 interface ToolCallAccumulator {
-  byIndex: Map<number, OpenAIToolCall>;
+  byIndex: Map<number, ToolCall>;
 }
 
 function createToolCallAccumulator(): ToolCallAccumulator {
   return { byIndex: new Map() };
 }
 
-function finalizeToolCalls(state: ToolCallAccumulator): OpenAIToolCall[] {
+function finalizeToolCalls(state: ToolCallAccumulator): ToolCall[] {
   return Array.from(state.byIndex.entries())
     .sort((a, b) => a[0] - b[0])
     .map(([, tc]) => tc)

@@ -558,7 +558,7 @@ export class ChatView extends ItemView {
     toolCalls?: Array<{ name: string; summary: string; ok: boolean }>
   ): void {
     if (toolCalls && toolCalls.length > 0) {
-      this.renderToolCalls(innerEl, toolCalls);
+      this.renderToolCalls(messageEl, toolCalls);
     }
 
     const actionsEl = messageEl.createDiv("mobile-ai-message-actions");
