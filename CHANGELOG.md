@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Tightened assistant Markdown spacing for mobile reading density while preserving line breaks during active streaming.
+- User messages now have a subtle tinted bubble and border so sent content is easier to distinguish from AI replies in the chat flow.
+
 ## [0.1.24] - 2026-06-26
 
 ### Changed

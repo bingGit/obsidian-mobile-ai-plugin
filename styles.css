@@ -70,27 +70,33 @@
 .mobile-ai-message {
   padding: 0;
   border: 0;
+  display: flex;
   user-select: text;
   -webkit-user-select: text;
 }
 
 .mobile-ai-message-inner {
-  padding: 8px 10px;
+  width: 100%;
+  padding: 7px 9px;
   border-radius: 8px;
   user-select: text;
   -webkit-user-select: text;
 }
 
 .mobile-ai-user .mobile-ai-message-inner {
+  margin-left: auto;
+  max-width: 94%;
   background: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
 }
 
 .mobile-ai-assistant .mobile-ai-message-inner {
+  max-width: 100%;
   background: transparent;
 }
 
 .mobile-ai-message + .mobile-ai-message {
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 /* 上下文 / 警告 / 正文: 全部允许文本选择(pre-wrap + overflow-wrap 与原版一致)。 */
@@ -105,8 +111,17 @@
 }
 
 .mobile-ai-message-content {
-  line-height: 1.55;
+  line-height: 1.38;
   min-width: 0;
+}
+
+.mobile-ai-assistant .mobile-ai-message-content {
+  white-space: normal;
+}
+
+.mobile-ai-message-content.is-streaming,
+.mobile-ai-user .mobile-ai-message-content {
+  white-space: pre-wrap;
 }
 
 .mobile-ai-message-content p,
@@ -122,7 +137,15 @@
 .mobile-ai-message-content blockquote,
 .mobile-ai-message-content table,
 .mobile-ai-message-content hr {
-  margin: 4px 0;
+  margin: 2px 0;
+}
+
+.mobile-ai-message-content > :first-child {
+  margin-top: 0;
+}
+
+.mobile-ai-message-content > :last-child {
+  margin-bottom: 0;
 }
 
 .mobile-ai-message-content h1,
@@ -132,19 +155,20 @@
 .mobile-ai-message-content h5,
 .mobile-ai-message-content h6 {
   font-weight: 600;
-  margin: 8px 0 2px;
+  line-height: 1.22;
+  margin: 8px 0 3px;
 }
 
-.mobile-ai-message-content h1 { font-size: 1.4em; }
-.mobile-ai-message-content h2 { font-size: 1.25em; }
-.mobile-ai-message-content h3 { font-size: 1.1em; }
+.mobile-ai-message-content h1 { font-size: 1.25em; }
+.mobile-ai-message-content h2 { font-size: 1.16em; }
+.mobile-ai-message-content h3 { font-size: 1.06em; }
 .mobile-ai-message-content h4,
 .mobile-ai-message-content h5,
 .mobile-ai-message-content h6 { font-size: 1em; }
 
 .mobile-ai-message-content ul,
 .mobile-ai-message-content ol {
-  padding-left: 1.4em;
+  padding-left: 1.25em;
 }
 
 .mobile-ai-message-content li > p {
@@ -152,7 +176,8 @@
 }
 
 .mobile-ai-message-content li {
-  margin: 1px 0;
+  margin: 0;
+  line-height: 1.38;
 }
 
 .mobile-ai-message-content pre {
@@ -184,9 +209,9 @@
 
 .mobile-ai-message-content blockquote {
   border-left: 2px solid var(--background-modifier-border);
-  padding: 0 8px;
+  padding: 0 6px;
   color: var(--text-muted);
-  margin: 4px 0;
+  margin: 3px 0;
 }
 
 /* 工具调用记录, 出现在 AI 消息正文下方, 在 4 个 action 按钮上方。 */

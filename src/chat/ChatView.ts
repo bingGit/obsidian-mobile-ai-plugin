@@ -425,6 +425,7 @@ export class ChatView extends ItemView {
           // Streaming: skip MarkdownRenderer entirely. The node is reused
           // across deltas via this.streamingContentEl so deltas are O(1)
           // textContent writes instead of full re-parse + DOM rebuild.
+          contentEl.addClass("is-streaming");
           contentEl.textContent = message.content || "";
           this.streamingContentEl = contentEl;
         } else {
