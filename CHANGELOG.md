@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.26] - 2026-06-26
+
 ### Added
 - Added `TODO.md` to track upcoming mobile UX, streaming, context, settings, and code-health optimization items.
 - Added request cancellation wiring so the stop button aborts fetch/XHR/WebSocket/requestUrl paths and treats user cancellation as a normal chat state.
@@ -123,7 +125,8 @@ Without those changes, the model still can't write files even with v0.1.18.
 - Chat message vertical spacing tightened.
 - Chat content is now contained inside the panel so it no longer overflows horizontally on mobile.
 
-[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.25...HEAD
+[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.26...HEAD
+[0.1.26]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.22...v0.1.23
