@@ -22,11 +22,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.24] - 2026-06-26
+
 ### Changed
 - Reworked the mobile composer into a larger embedded input panel: the textarea now owns the vertical space, with attachment, stop, and send controls tucked into the panel footer.
 - Made provider action buttons wrap into a mobile-friendly grid so the settings page no longer clips the bottom operation row.
 
 ### Fixed
+- Fullscreen is now controlled by the plugin itself as a fixed overlay, so tapping the header button has an immediate visible effect instead of depending on Obsidian drawer internals.
 - Provider name edits no longer re-render and collapse the provider details section on every keystroke.
 - Fixed TypeScript errors in the function-calling stream path that esbuild did not catch, including the tool-call chip renderer referencing an out-of-scope `innerEl` variable.
 - Normalized direct, XHR, and WebSocket stream results to return `{ content, toolCalls }`, so chat-completions tool calls survive every streaming transport consistently.
@@ -98,7 +101,8 @@ Without those changes, the model still can't write files even with v0.1.18.
 - Chat message vertical spacing tightened.
 - Chat content is now contained inside the panel so it no longer overflows horizontally on mobile.
 
-[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.23...HEAD
+[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.24...HEAD
+[0.1.24]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.22...v0.1.23
 [0.1.22]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.21...v0.1.22
 [0.1.21]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.20...v0.1.21
