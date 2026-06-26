@@ -87,6 +87,7 @@ export class ChatView extends ItemView {
 
     this.inputEl.value = prompt;
     this.inputEl.focus();
+    this.resizeInput();
     this.renderSuggestions();
   }
 
@@ -158,26 +159,38 @@ export class ChatView extends ItemView {
     const composerEl = containerEl.createDiv("mobile-ai-composer");
     this.suggestionEl = composerEl.createDiv("mobile-ai-suggestions");
 
-    const composerRow = composerEl.createDiv("mobile-ai-composer-row");
-    this.renderAttachControl(composerRow);
-    this.renderSendControl(composerRow);
+    const composerPanel = composerEl.createDiv("mobile-ai-composer-panel");
 
-    this.inputEl = composerRow.createEl("textarea", {
+    this.inputEl = composerPanel.createEl("textarea", {
       cls: "mobile-ai-input",
       attr: {
-        rows: "1",
+        rows: "3",
         placeholder: "问当前笔记，或输入 @ 搜索 vault 内 Markdown 文件"
       }
     });
     // Auto-resize: input 时先把 height 置为 auto 让 scrollHeight 反映真实内容,
     // 再写回 scrollHeight, 由 CSS max-height 兜底防止撑爆视口。
     this.inputEl.addEventListener("input", () => {
-      this.inputEl.style.height = "auto";
-      this.inputEl.style.height = `${this.inputEl.scrollHeight}px`;
+      this.resizeInput();
       this.renderSuggestions();
     });
     this.inputEl.addEventListener("keyup", () => this.renderSuggestions());
     this.inputEl.addEventListener("click", () => this.renderSuggestions());
+
+    const composerFooter = composerPanel.createDiv("mobile-ai-composer-footer");
+    const toolGroup = composerFooter.createDiv("mobile-ai-composer-tools");
+    const actionGroup = composerFooter.createDiv("mobile-ai-composer-actions");
+    this.renderAttachControl(toolGroup);
+    this.renderSendControl(actionGroup);
+  }
+
+  private resizeInput(): void {
+    if (!this.inputEl) {
+      return;
+    }
+
+    this.inputEl.style.height = "auto";
+    this.inputEl.style.height = `${this.inputEl.scrollHeight}px`;
   }
 
   private renderAttachControl(rowEl: HTMLElement): void {

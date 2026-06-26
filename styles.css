@@ -26,7 +26,9 @@
 .mobile-ai-header,
 .mobile-ai-header-actions,
 .mobile-ai-provider-controls,
-.mobile-ai-composer-row,
+.mobile-ai-composer-footer,
+.mobile-ai-composer-tools,
+.mobile-ai-composer-actions,
 .mobile-ai-attach-popover {
   display: flex;
   align-items: center;
@@ -317,8 +319,6 @@
   font-size: var(--font-ui-small);
 }
 
-/* Composer: 一行排开。左侧附件按钮(点击展开 popover) + 中间自动撑高的输入框
-   + 右侧发送/停止按钮。三者 flex 排在同一行, 高度对齐到 input 当前高度。 */
 .mobile-ai-composer {
   flex: 0 0 auto;
   display: flex;
@@ -326,20 +326,47 @@
   gap: 6px;
 }
 
-.mobile-ai-composer-row {
+.mobile-ai-composer-panel {
   position: relative;
-  align-items: flex-end;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+}
+
+.mobile-ai-composer-footer {
+  justify-content: space-between;
+  min-height: 34px;
+}
+
+.mobile-ai-composer-tools,
+.mobile-ai-composer-actions {
+  position: relative;
+  flex: 0 0 auto;
 }
 
 .mobile-ai-input {
-  flex: 1 1 auto;
+  display: block;
+  width: 100%;
   min-width: 0;
-  min-height: 38px;
+  min-height: 76px;
   max-height: 30vh;
   resize: none;
   overflow-y: auto;
   line-height: 1.45;
-  padding: 8px 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.mobile-ai-input:focus,
+.mobile-ai-input:focus-visible {
+  box-shadow: none;
+  outline: none;
 }
 
 .mobile-ai-send-button {

@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Reworked the mobile composer into a larger embedded input panel: the textarea now owns the vertical space, with attachment, stop, and send controls tucked into the panel footer.
+
 ### Fixed
 - Fixed TypeScript errors in the function-calling stream path that esbuild did not catch, including the tool-call chip renderer referencing an out-of-scope `innerEl` variable.
 - Normalized direct, XHR, and WebSocket stream results to return `{ content, toolCalls }`, so chat-completions tool calls survive every streaming transport consistently.
