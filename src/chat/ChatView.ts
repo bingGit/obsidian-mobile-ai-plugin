@@ -1,4 +1,4 @@
-import { ItemView, MarkdownRenderer, Notice, Platform, setIcon, type TFile, type WorkspaceLeaf } from "obsidian";
+import { ItemView, MarkdownRenderer, Notice, setIcon, type TFile, type WorkspaceLeaf } from "obsidian";
 
 import type MobileAiCompanionPlugin from "../main";
 import { FileSuggest } from "../context/FileSuggest";
@@ -29,6 +29,7 @@ export class ChatView extends ItemView {
   // writes plain text into the cached content element instead.
   private streamingMessageId: string | null = null;
   private streamingContentEl: HTMLElement | null = null;
+  private fullscreen = false;
 
   private providerSelectEl!: HTMLSelectElement;
   private modelSelectEl!: HTMLSelectElement;
@@ -75,6 +76,8 @@ export class ChatView extends ItemView {
   async onClose(): Promise<void> {
     this.controller.cancel();
     this.stopRequestStatusTimer();
+    this.fullscreen = false;
+    this.contentEl.removeClass("is-fullscreen");
   }
 
   setPrompt(prompt: string): void {
@@ -130,6 +133,7 @@ export class ChatView extends ItemView {
     const containerEl = this.contentEl;
     containerEl.empty();
     containerEl.addClass("mobile-ai-chat-view");
+    containerEl.toggleClass("is-fullscreen", this.fullscreen);
 
     // Invalidate the cached streaming node: the DOM is about to be rebuilt.
     this.streamingContentEl = null;
@@ -310,76 +314,26 @@ export class ChatView extends ItemView {
       this.render();
     });
 
-    // 全屏按钮: mobile 走 drawer.expand() 让右滑面板铺满, desktop 走 getLeaf("window")
-    // 把视图弹到独立窗口方便用户自己拉大/移到第二屏。
     const fullscreenButton = actionsEl.createEl("button", {
       cls: "mobile-ai-icon-button",
       attr: {
-        "aria-label": "全屏",
-        title: "全屏"
+        "aria-label": this.fullscreen ? "退出全屏" : "全屏",
+        title: this.fullscreen ? "退出全屏" : "全屏"
       }
     });
-    setIcon(fullscreenButton, "maximize-2");
+    setIcon(fullscreenButton, this.fullscreen ? "minimize-2" : "maximize-2");
     fullscreenButton.addEventListener("click", () => {
-      this.openFullscreen();
+      this.toggleFullscreen(fullscreenButton);
     });
   }
 
-  private openFullscreen(): void {
-    // 走 app.workspace.rightSplit 直达抽屉/右栏, 不依赖 leaf.parent 链:
-    //   - 优点: 老版本(<=0.1.20)留下来的 tab 孤儿也会触发抽屉展开,
-    //     走 leaf.parent 链找不到 drawer 就静默失败了, 这是原版最大的坑。
-    //   - 副作用: 即使 chat 不在 right split 里, 右抽屉也会被展开 —
-    //     对 mobile 来说正好把抽屉"喊回来"成全屏, 对 desktop 来说 idempotent。
-    const rightSplit = this.app.workspace.rightSplit as unknown as {
-      expand?: () => void;
-      collapse?: () => void;
-      collapsed?: boolean;
-    } | null;
-    // eslint-disable-next-line no-console
-    console.log("[mobile-ai] fullscreen click", {
-      isMobile: Platform.isMobile,
-      hasRightSplit: Boolean(rightSplit),
-      rightSplitCollapsed: rightSplit?.collapsed,
-      leafParent: (this.leaf?.parent as { constructor?: { name?: string } })?.constructor?.name
-    });
-
-    if (rightSplit) {
-      if (rightSplit.collapsed) {
-        rightSplit.expand?.();
-      } else {
-        // 不在 collapsed 状态, 也要调一次 expand, 防止 rightSplit 自己状态
-        // 跟实际 DOM 不同步(比如 framework 收起后又展开, expand() 不会重置)。
-        rightSplit.expand?.();
-      }
-    }
-
-    // 同时 reveal 一下当前 leaf, 让框架把它放到抽屉里最前面, 真正"可见"。
-    if (this.leaf) {
-      this.app.workspace.revealLeaf(this.leaf);
-    }
-
-    // 兜底: 如果 chat 根本不在 right split 里(典型场景: 老 tab 孤儿),
-    // 走一次 ensureSideLeaf 让框架把 chat 重新放到右侧。
-    const isInRight = this.isLeafInRightSplit();
-    if (!isInRight) {
-      void this.plugin.activateChatView();
-    }
-  }
-
-  private isLeafInRightSplit(): boolean {
-    const target = this.app.workspace.rightSplit as unknown;
-    if (!target) {
-      return false;
-    }
-    let candidate: unknown = this.leaf?.parent ?? null;
-    while (candidate) {
-      if (candidate === target) {
-        return true;
-      }
-      candidate = (candidate as { parent?: unknown }).parent ?? null;
-    }
-    return false;
+  private toggleFullscreen(buttonEl: HTMLElement): void {
+    this.fullscreen = !this.fullscreen;
+    this.contentEl.toggleClass("is-fullscreen", this.fullscreen);
+    buttonEl.setAttribute("aria-label", this.fullscreen ? "退出全屏" : "全屏");
+    buttonEl.setAttribute("title", this.fullscreen ? "退出全屏" : "全屏");
+    setIcon(buttonEl, this.fullscreen ? "minimize-2" : "maximize-2");
+    this.scrollMessageListToBottom(false);
   }
 
   private renderModelSelect(parentEl: HTMLElement): void {
