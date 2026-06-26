@@ -326,27 +326,60 @@ export class ChatView extends ItemView {
   }
 
   private openFullscreen(): void {
-    // 现状: 在 mobile 上, chat 已经在右滑 drawer 里, 抽屉展开就是全屏;
-    //       在 desktop 上, chat 在右栏, 没法让它"占满主区"而又不破坏当前
-    //       工作区布局(那需要 detach 到独立窗口并把 session 串过去, 是另一个
-    //       改动面)。所以目前 mobile 抽屉展开, desktop 暂时是 no-op。
-    if (!Platform.isMobile && !Platform.isMobileApp) {
-      return;
+    // 走 app.workspace.rightSplit 直达抽屉/右栏, 不依赖 leaf.parent 链:
+    //   - 优点: 老版本(<=0.1.20)留下来的 tab 孤儿也会触发抽屉展开,
+    //     走 leaf.parent 链找不到 drawer 就静默失败了, 这是原版最大的坑。
+    //   - 副作用: 即使 chat 不在 right split 里, 右抽屉也会被展开 —
+    //     对 mobile 来说正好把抽屉"喊回来"成全屏, 对 desktop 来说 idempotent。
+    const rightSplit = this.app.workspace.rightSplit as unknown as {
+      expand?: () => void;
+      collapse?: () => void;
+      collapsed?: boolean;
+    } | null;
+    // eslint-disable-next-line no-console
+    console.log("[mobile-ai] fullscreen click", {
+      isMobile: Platform.isMobile,
+      hasRightSplit: Boolean(rightSplit),
+      rightSplitCollapsed: rightSplit?.collapsed,
+      leafParent: (this.leaf?.parent as { constructor?: { name?: string } })?.constructor?.name
+    });
+
+    if (rightSplit) {
+      if (rightSplit.collapsed) {
+        rightSplit.expand?.();
+      } else {
+        // 不在 collapsed 状态, 也要调一次 expand, 防止 rightSplit 自己状态
+        // 跟实际 DOM 不同步(比如 framework 收起后又展开, expand() 不会重置)。
+        rightSplit.expand?.();
+      }
     }
 
-    const parent: unknown = this.leaf?.parent ?? null;
-    let candidate: unknown = parent;
+    // 同时 reveal 一下当前 leaf, 让框架把它放到抽屉里最前面, 真正"可见"。
+    if (this.leaf) {
+      this.app.workspace.revealLeaf(this.leaf);
+    }
+
+    // 兜底: 如果 chat 根本不在 right split 里(典型场景: 老 tab 孤儿),
+    // 走一次 ensureSideLeaf 让框架把 chat 重新放到右侧。
+    const isInRight = this.isLeafInRightSplit();
+    if (!isInRight) {
+      void this.plugin.activateChatView();
+    }
+  }
+
+  private isLeafInRightSplit(): boolean {
+    const target = this.app.workspace.rightSplit as unknown;
+    if (!target) {
+      return false;
+    }
+    let candidate: unknown = this.leaf?.parent ?? null;
     while (candidate) {
-      const drawerLike = candidate as { expand?: () => void; collapsed?: boolean };
-      if (typeof drawerLike.expand === "function" && typeof drawerLike.collapsed === "boolean") {
-        drawerLike.expand();
-        return;
+      if (candidate === target) {
+        return true;
       }
       candidate = (candidate as { parent?: unknown }).parent ?? null;
     }
-
-    // 兜底: 找不到 drawer 祖先时, 重新走一次 ensureSideLeaf 让框架 reveal。
-    void this.plugin.activateChatView();
+    return false;
   }
 
   private renderModelSelect(parentEl: HTMLElement): void {

@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Fullscreen button** in the header (`maximize-2` icon). On mobile it walks up the leaf's parent chain looking for a `WorkspaceMobileDrawer` / `WorkspaceSidedock` and calls `expand()` on it, so a previously collapsed right drawer is re-expanded to fullscreen. On desktop the button is currently a no-op (popping the chat out to its own workspace window would also need to thread `sessionId` through the leaf state — separate piece of work if you want it).
 - **`user-select: text` is now explicit** on `.mobile-ai-message`, `.mobile-ai-message-inner`, `.mobile-ai-message-content`, `.mobile-ai-message-context`, and `.mobile-ai-warning`. Mobile webviews can occasionally inherit a `user-select: none` from the host theme; this forces selection to work on every part of both user and assistant messages, so a specific sentence can be long-pressed and copied without having to copy the whole message.
 
+## [0.1.23] - 2026-06-26
+
+### Fixed
+- **Fullscreen button in the header was a no-op** when the chat leaf was not directly inside a `WorkspaceMobileDrawer` — e.g. when an older `v0.1.20` chat leaf survived a BRAT upgrade in an orphan tab. The previous implementation walked up `leaf.parent` looking for something with `expand()` / `collapsed`; for those orphan tabs the walk silently fell through to `activateChatView`, which re-created the leaf in the right side without affecting the leaf the user was actually looking at, so the click appeared to do nothing.
+- `openFullscreen` now drives `app.workspace.rightSplit` directly (always present on mobile as a `WorkspaceMobileDrawer`, on desktop as a `WorkspaceSidedock`), then calls `revealLeaf(this.leaf)`, and only as a last resort re-runs `ensureSideLeaf` when the current leaf is provably not in the right split. A `[mobile-ai] fullscreen click` dev-console log line exposes the state of `rightSplit` and the leaf's parent constructor name so the next "button does nothing" case is one console line away from diagnosed.
+
 ## [Unreleased]
 
 ## [0.1.21] - 2026-06-25
@@ -83,7 +89,8 @@ Without those changes, the model still can't write files even with v0.1.18.
 - Chat message vertical spacing tightened.
 - Chat content is now contained inside the panel so it no longer overflows horizontally on mobile.
 
-[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.22...HEAD
+[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.23...HEAD
+[0.1.23]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.22...v0.1.23
 [0.1.22]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.21...v0.1.22
 [0.1.21]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.20...v0.1.21
 [0.1.20]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.19...v0.1.20
