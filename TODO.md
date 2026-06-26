@@ -7,8 +7,7 @@ Keep items concrete enough that we can pick one, implement it, test it, and mark
 
 - [ ] Verify the v0.1.25 chat layout on Android: user bubble contrast, assistant Markdown density, composer height, and header buttons.
 - [ ] Tune Markdown spacing again after real mobile screenshots if headings, lists, or blockquotes still occupy too much vertical space.
-- [ ] Confirm the clear-current-chat action is easy to understand and not too close to other destructive-looking buttons.
-- [ ] Check whether the fullscreen overlay needs an explicit close/back affordance beyond the current minimize icon.
+- [ ] Verify whether the body-level fullscreen overlay truly covers the whole Android WebView; remove the fullscreen entry if Obsidian still constrains it.
 
 ## Priority 1 - Chat Experience
 
@@ -55,6 +54,9 @@ Keep items concrete enough that we can pick one, implement it, test it, and mark
 
 ## Done
 
+- [x] Make stop generation cancel the active request path and avoid turning user cancellation into an AI error reply.
+- [x] Move current-chat clear and fullscreen into a compact header "more" menu.
+- [x] Make current-chat clear create a fresh empty session while preserving provider/model choice.
 - [x] Add global "clear all chat history" in settings.
 - [x] Add current-chat clear action in the chat header.
 - [x] Make the common models textarea wider than the cleanup button.

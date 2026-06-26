@@ -53,6 +53,7 @@ export interface ChatRequest {
   // 可选, 当 tools 里有 force-call 的 tool 时使用(暂未实现, 留接口)。
   tool_choice?: "auto" | "none" | { type: "function"; function: { name: string } };
   onStatus?: (message: string) => void;
+  signal?: AbortSignal;
 }
 
 export interface ChatResponse {

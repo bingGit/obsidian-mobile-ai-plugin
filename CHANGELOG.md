@@ -24,6 +24,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added `TODO.md` to track upcoming mobile UX, streaming, context, settings, and code-health optimization items.
+- Added request cancellation wiring so the stop button aborts fetch/XHR/WebSocket/requestUrl paths and treats user cancellation as a normal chat state.
+
+### Changed
+- Moved current-chat clear and fullscreen into a compact header "more" menu to reduce top-bar crowding on mobile.
+- Current-chat clear now starts a fresh empty session while preserving the selected provider/model.
+- Fullscreen now uses a body-level overlay instead of relying on the side pane frame, making the Android test result explicit.
+
+### Fixed
+- Stopping a request no longer inserts a debug error as the assistant reply; partial streamed text is preserved when available, otherwise the user input is restored.
 
 ## [0.1.25] - 2026-06-26
 

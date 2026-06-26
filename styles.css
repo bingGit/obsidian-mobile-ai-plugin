@@ -10,7 +10,7 @@
 .mobile-ai-chat-view.is-fullscreen {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: 10000;
   width: 100vw;
   height: 100dvh;
   max-height: 100dvh;
@@ -29,6 +29,7 @@
 .mobile-ai-composer-footer,
 .mobile-ai-composer-tools,
 .mobile-ai-composer-actions,
+.mobile-ai-header-menu,
 .mobile-ai-attach-popover {
   display: flex;
   align-items: center;
@@ -44,6 +45,50 @@
   flex: 1 1 auto;
   min-width: 0;
   gap: 6px;
+}
+
+.mobile-ai-header-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.mobile-ai-header-menu-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  display: none;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 176px;
+  padding: 4px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  z-index: 12;
+}
+
+.mobile-ai-header-menu.is-open .mobile-ai-header-menu-popover {
+  display: flex;
+}
+
+.mobile-ai-header-menu-popover button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-normal);
+  cursor: pointer;
+}
+
+.mobile-ai-header-menu-popover button:hover {
+  background: var(--background-modifier-hover);
 }
 
 .mobile-ai-select {

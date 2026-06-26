@@ -30,6 +30,7 @@ export class ChatView extends ItemView {
   private streamingMessageId: string | null = null;
   private streamingContentEl: HTMLElement | null = null;
   private fullscreen = false;
+  private fullscreenHostEl: HTMLElement | null = null;
 
   private providerSelectEl!: HTMLSelectElement;
   private modelSelectEl!: HTMLSelectElement;
@@ -76,8 +77,7 @@ export class ChatView extends ItemView {
   async onClose(): Promise<void> {
     this.controller.cancel();
     this.stopRequestStatusTimer();
-    this.fullscreen = false;
-    this.contentEl.removeClass("is-fullscreen");
+    this.exitFullscreen();
   }
 
   setPrompt(prompt: string): void {
@@ -116,6 +116,8 @@ export class ChatView extends ItemView {
   async clearCurrentSessionMessages(options: { confirm?: boolean; persist?: boolean; notice?: boolean } = {}): Promise<void> {
     const { confirm = true, persist = true, notice = true } = options;
     const session = this.ensureSession();
+    const provider = this.getSelectedProvider() ?? this.plugin.settings.providers[0];
+    const model = this.resolveModelForProvider(provider, session.model);
 
     if (!session.messages.length && !this.attachments.length) {
       if (notice) {
@@ -135,10 +137,10 @@ export class ChatView extends ItemView {
     this.streamingMessageId = null;
     this.streamingContentEl = null;
     this.attachments = [];
-    session.messages = [];
+    this.session = this.plugin.chatStore.createSession(provider.id, model);
 
     if (persist) {
-      await this.plugin.chatStore.saveSession(session);
+      await this.plugin.chatStore.deleteSession(session.id);
     }
 
     this.render();
@@ -166,7 +168,7 @@ export class ChatView extends ItemView {
   }
 
   private render(): void {
-    const containerEl = this.contentEl;
+    const containerEl = this.getRenderContainer();
     containerEl.empty();
     containerEl.addClass("mobile-ai-chat-view");
     containerEl.toggleClass("is-fullscreen", this.fullscreen);
@@ -310,9 +312,8 @@ export class ChatView extends ItemView {
     stopButton.disabled = !this.sending;
     stopButton.addEventListener("click", () => {
       this.controller.cancel();
-      this.sending = false;
-      new Notice("已请求停止，当前网络请求返回后会被忽略。");
-      this.render();
+      this.setStatusText("正在停止生成...");
+      new Notice("正在停止生成...");
     });
   }
 
@@ -362,39 +363,64 @@ export class ChatView extends ItemView {
       this.render();
     });
 
-    const clearButton = actionsEl.createEl("button", {
+    const menuWrap = actionsEl.createDiv("mobile-ai-header-menu");
+    const moreButton = menuWrap.createEl("button", {
       cls: "mobile-ai-icon-button",
       attr: {
-        "aria-label": "清空当前聊天",
-        title: "清空当前聊天"
+        "aria-label": "更多操作",
+        title: "更多操作"
       }
     });
+    setIcon(moreButton, "more-horizontal");
+
+    const menuEl = menuWrap.createDiv("mobile-ai-header-menu-popover");
+    const clearButton = menuEl.createEl("button", {
+      attr: { "aria-label": "清空当前聊天" }
+    });
     setIcon(clearButton, "trash-2");
+    clearButton.createSpan({ text: "清空当前聊天" });
     clearButton.disabled = this.sending || session.messages.length === 0;
     clearButton.addEventListener("click", () => {
+      menuWrap.removeClass("is-open");
       void this.clearCurrentSessionMessages();
     });
 
-    const fullscreenButton = actionsEl.createEl("button", {
-      cls: "mobile-ai-icon-button",
-      attr: {
-        "aria-label": this.fullscreen ? "退出全屏" : "全屏",
-        title: this.fullscreen ? "退出全屏" : "全屏"
-      }
+    const fullscreenButton = menuEl.createEl("button", {
+      attr: { "aria-label": this.fullscreen ? "退出全屏" : "全屏" }
     });
     setIcon(fullscreenButton, this.fullscreen ? "minimize-2" : "maximize-2");
+    fullscreenButton.createSpan({ text: this.fullscreen ? "退出全屏" : "全屏" });
     fullscreenButton.addEventListener("click", () => {
-      this.toggleFullscreen(fullscreenButton);
+      menuWrap.removeClass("is-open");
+      this.toggleFullscreen();
+    });
+
+    moreButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      menuWrap.toggleClass("is-open", !menuWrap.hasClass("is-open"));
     });
   }
 
-  private toggleFullscreen(buttonEl: HTMLElement): void {
+  private getRenderContainer(): HTMLElement {
+    return this.fullscreenHostEl ?? this.contentEl;
+  }
+
+  private toggleFullscreen(): void {
     this.fullscreen = !this.fullscreen;
-    this.contentEl.toggleClass("is-fullscreen", this.fullscreen);
-    buttonEl.setAttribute("aria-label", this.fullscreen ? "退出全屏" : "全屏");
-    buttonEl.setAttribute("title", this.fullscreen ? "退出全屏" : "全屏");
-    setIcon(buttonEl, this.fullscreen ? "minimize-2" : "maximize-2");
+    if (this.fullscreen) {
+      this.fullscreenHostEl = document.body.createDiv("mobile-ai-fullscreen-host");
+    } else {
+      this.exitFullscreen();
+    }
+    this.render();
     this.scrollMessageListToBottom(false);
+  }
+
+  private exitFullscreen(): void {
+    this.fullscreen = false;
+    this.fullscreenHostEl?.remove();
+    this.fullscreenHostEl = null;
+    this.contentEl.removeClass("is-fullscreen");
   }
 
   private renderModelSelect(parentEl: HTMLElement): void {
@@ -445,7 +471,7 @@ export class ChatView extends ItemView {
     if (!session.messages.length) {
       this.messageListEl.createDiv({
         cls: "mobile-ai-empty",
-        text: "还没有消息。"
+        text: "当前聊天为空。可以直接输入新问题，或用附件按钮添加当前文件/选中文本。"
       });
       return;
     }
@@ -733,10 +759,31 @@ export class ChatView extends ItemView {
       this.attachments = [];
       new Notice(`已发送，约 ${result.characterCount} 字符上下文。`);
     } catch (error) {
-      session.messages = session.messages.filter((message) => message.id !== userMessage.id && message.id !== assistantMessage.id);
-      session.messages.push(createMessage("assistant", toDebugMessage(error)));
       this.streamingMessageId = null;
       this.streamingContentEl = null;
+
+      if (isCanceledRequest(error)) {
+        const hasPartialContent = assistantMessage.content.trim().length > 0 || Boolean(assistantMessage.toolCalls?.length);
+
+        if (hasPartialContent) {
+          assistantMessage.content = `${assistantMessage.content.trimEnd()}\n\n_已停止生成。_`;
+          await this.renderMessages();
+          await this.plugin.chatStore.saveSession(session);
+          this.inputEl.value = "";
+          this.attachments = [];
+          new Notice("已停止，保留已生成内容。");
+        } else {
+          session.messages = session.messages.filter((message) => message.id !== userMessage.id && message.id !== assistantMessage.id);
+          await this.plugin.chatStore.saveSession(session);
+          inputToRestore = userInput;
+          new Notice("已停止生成。");
+        }
+
+        return;
+      }
+
+      session.messages = session.messages.filter((message) => message.id !== userMessage.id && message.id !== assistantMessage.id);
+      session.messages.push(createMessage("assistant", toDebugMessage(error)));
       inputToRestore = userInput;
       new Notice(toUserMessage(error));
     } finally {
@@ -902,4 +949,8 @@ export class ChatView extends ItemView {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function isCanceledRequest(error: unknown): boolean {
+  return error instanceof Error && error.message === "请求已取消。";
 }

@@ -37,17 +37,17 @@ const MAX_TOOL_ITERATIONS = 5;
 
 export class ChatController {
   private activeRequestId = 0;
+  private activeAbortController: AbortController | null = null;
 
   constructor(private readonly plugin: MobileAiCompanionPlugin) {}
 
   cancel(): void {
     this.activeRequestId += 1;
+    this.activeAbortController?.abort();
+    this.activeAbortController = null;
   }
 
   async send(input: SendInput): Promise<SendResult> {
-    const requestId = this.activeRequestId + 1;
-    this.activeRequestId = requestId;
-
     if (!input.userInput.trim()) {
       throw new UserFacingError("请输入问题。");
     }
@@ -55,6 +55,11 @@ export class ChatController {
     if (!input.model.trim()) {
       throw new UserFacingError("请先选择或填写模型。");
     }
+
+    const requestId = this.activeRequestId + 1;
+    this.activeRequestId = requestId;
+    const abortController = new AbortController();
+    this.activeAbortController = abortController;
 
     const context = await new ContextBuilder(this.plugin.app, this.plugin.settings)
       .build(input.userInput, input.attachments);
@@ -70,72 +75,83 @@ export class ChatController {
     let messages: ChatMessage[] = baseMessages;
     let finalContent = "";
 
-    for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
-      if (requestId !== this.activeRequestId) {
-        throw new UserFacingError("请求已取消。");
-      }
-
-      const request = {
-        config: input.provider,
-        model: input.model,
-        messages,
-        temperature: input.provider.temperature,
-        maxTokens: input.provider.maxTokens,
-        timeoutMs: this.plugin.settings.requestTimeoutMs,
-        tools,
-        onStatus: input.onStatus
-      };
-
-      const response = input.provider.stream && provider.streamChat
-        ? await provider.streamChat(request, (delta) => {
-          if (requestId === this.activeRequestId) {
-            input.onDelta?.(delta);
-          }
-        })
-        : await provider.sendChat(request);
-
-      if (requestId !== this.activeRequestId) {
-        throw new UserFacingError("请求已取消。");
-      }
-
-      // 累加这一轮的文本内容。OpenAI 流式 API 把每轮的 content 完整返回一次, onDelta 也会
-      // 同步把同样内容打给 ChatView, 这边把多轮的 content 累加成总文本, 防止最后一轮
-      // 把前面的覆盖掉。
-      finalContent += response.content;
-
-      // 串行执行工具: 同一次响应里的多个 tool_calls 按顺序串行处理, 防止并行写同一文件冲突。
-      // (Phase 1 不做并行 tool, 即使 AI 一次返回多个 call, 我们也一个一个来。)
-      const toolCalls = response.toolCalls ?? [];
-
-      if (toolCalls.length === 0) {
-        break;
-      }
-
-      // 把 AI 这一轮的 assistant 消息带 tool_calls 推进 messages, 让 OpenAI 把工具结果关联回去。
-      messages = [
-        ...messages,
-        {
-          role: "assistant",
-          content: response.content,
-          tool_calls: toolCalls
+    try {
+      for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+        if (requestId !== this.activeRequestId || abortController.signal.aborted) {
+          throw new UserFacingError("请求已取消。");
         }
-      ];
 
-      for (const call of toolCalls) {
-        const result = await executeToolCall(call, ctx);
-        allToolCalls.push({ call, result });
-        input.onToolCall?.(call, result);
+        const request = {
+          config: input.provider,
+          model: input.model,
+          messages,
+          temperature: input.provider.temperature,
+          maxTokens: input.provider.maxTokens,
+          timeoutMs: this.plugin.settings.requestTimeoutMs,
+          tools,
+          onStatus: input.onStatus,
+          signal: abortController.signal
+        };
+
+        const response = input.provider.stream && provider.streamChat
+          ? await provider.streamChat(request, (delta) => {
+            if (requestId === this.activeRequestId && !abortController.signal.aborted) {
+              input.onDelta?.(delta);
+            }
+          })
+          : await provider.sendChat(request);
+
+        if (requestId !== this.activeRequestId || abortController.signal.aborted) {
+          throw new UserFacingError("请求已取消。");
+        }
+
+        // 累加这一轮的文本内容。OpenAI 流式 API 把每轮的 content 完整返回一次, onDelta 也会
+        // 同步把同样内容打给 ChatView, 这边把多轮的 content 累加成总文本, 防止最后一轮
+        // 把前面的覆盖掉。
+        finalContent += response.content;
+
+        // 串行执行工具: 同一次响应里的多个 tool_calls 按顺序串行处理, 防止并行写同一文件冲突。
+        // (Phase 1 不做并行 tool, 即使 AI 一次返回多个 call, 我们也一个一个来。)
+        const toolCalls = response.toolCalls ?? [];
+
+        if (toolCalls.length === 0) {
+          break;
+        }
+
+        // 把 AI 这一轮的 assistant 消息带 tool_calls 推进 messages, 让 OpenAI 把工具结果关联回去。
         messages = [
           ...messages,
           {
-            role: "tool",
-            tool_call_id: call.id,
-            name: call.function.name,
-            content: result.resultText
+            role: "assistant",
+            content: response.content,
+            tool_calls: toolCalls
           }
         ];
+
+        for (const call of toolCalls) {
+          if (requestId !== this.activeRequestId || abortController.signal.aborted) {
+            throw new UserFacingError("请求已取消。");
+          }
+
+          const result = await executeToolCall(call, ctx);
+          allToolCalls.push({ call, result });
+          input.onToolCall?.(call, result);
+          messages = [
+            ...messages,
+            {
+              role: "tool",
+              tool_call_id: call.id,
+              name: call.function.name,
+              content: result.resultText
+            }
+          ];
+        }
+        // 继续循环, 让 AI 基于工具结果生成下一轮。
       }
-      // 继续循环, 让 AI 基于工具结果生成下一轮。
+    } finally {
+      if (this.activeAbortController === abortController) {
+        this.activeAbortController = null;
+      }
     }
 
     return {

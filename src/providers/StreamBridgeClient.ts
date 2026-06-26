@@ -161,6 +161,7 @@ export class StreamBridgeClient {
       // 如果 deltaCount === 0, 视为"老式"中转只在 done 一次性回吐全量。
       let deltaCount = 0;
       let deltaTextLengthSum = 0;
+      let unlinkAbort: () => void = () => undefined;
       const timeoutId = window.setTimeout(() => {
         finish(() => reject(new UserFacingError(`WebSocket bridge 超过 ${request.timeoutMs} 毫秒仍未返回完成事件。`, buildBridgeDebugDetails(diagnostics))));
       }, request.timeoutMs);
@@ -172,6 +173,7 @@ export class StreamBridgeClient {
 
         settled = true;
         window.clearTimeout(timeoutId);
+        unlinkAbort();
         try {
           socket.close();
         } catch {
@@ -179,6 +181,9 @@ export class StreamBridgeClient {
         }
         fn();
       };
+      unlinkAbort = linkAbortSignal(request.signal, () => {
+        finish(() => reject(new UserFacingError("请求已取消。")));
+      });
 
       socket.onopen = () => {
         diagnostics.openSucceeded = true;
@@ -339,6 +344,20 @@ function createBridgeDiagnostics(bridgeUrl: string): BridgeDiagnostics {
     lastMessageType: "(none)",
     lastStatus: "(none)"
   };
+}
+
+function linkAbortSignal(signal: AbortSignal | undefined, onAbort: () => void): () => void {
+  if (!signal) {
+    return () => undefined;
+  }
+
+  if (signal.aborted) {
+    onAbort();
+    return () => undefined;
+  }
+
+  signal.addEventListener("abort", onAbort, { once: true });
+  return () => signal.removeEventListener("abort", onAbort);
 }
 
 function buildBridgeDebugDetails(diagnostics: BridgeDiagnostics) {

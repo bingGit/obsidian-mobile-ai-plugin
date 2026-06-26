@@ -341,6 +341,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       url: joinModelApiUrl(config.baseUrl, "chat-completions"),
       method: "POST",
       timeoutMs: request.timeoutMs,
+      signal: request.signal,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.apiKey.trim()}`
@@ -382,6 +383,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       url: joinModelApiUrl(config.baseUrl, "responses"),
       method: "POST",
       timeoutMs: request.timeoutMs,
+      signal: request.signal,
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${config.apiKey.trim()}`
@@ -429,6 +431,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     const body = buildChatCompletionsBody(request);
     const controller = new AbortController();
     const idleTimeout = createIdleTimeout(request.timeoutMs, () => controller.abort());
+    const unlinkAbort = linkAbortSignal(request.signal, () => controller.abort());
     const diagnostics = createStreamDiagnostics("chat-completions", "fetch");
 
     try {
@@ -473,6 +476,10 @@ export class OpenAICompatibleProvider implements AiProvider {
       });
       return { content, toolCalls: finalizeToolCalls(toolCallState) };
     } catch (error) {
+      if (request.signal?.aborted || isAbortError(error)) {
+        throw new UserFacingError("请求已取消。");
+      }
+
       if (error instanceof UserFacingError) {
         throw appendDebugDetails(error, buildStreamDebugDetails(diagnostics));
       }
@@ -491,6 +498,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       ]);
     } finally {
       idleTimeout.clear();
+      unlinkAbort();
     }
   }
 
@@ -518,6 +526,7 @@ export class OpenAICompatibleProvider implements AiProvider {
     const url = joinModelApiUrl(config.baseUrl, "responses");
     const controller = new AbortController();
     const idleTimeout = createIdleTimeout(request.timeoutMs, () => controller.abort());
+    const unlinkAbort = linkAbortSignal(request.signal, () => controller.abort());
     const diagnostics = createStreamDiagnostics("responses", "fetch");
 
     try {
@@ -561,6 +570,10 @@ export class OpenAICompatibleProvider implements AiProvider {
       });
       return { content, toolCalls: [] };
     } catch (error) {
+      if (request.signal?.aborted || isAbortError(error)) {
+        throw new UserFacingError("请求已取消。");
+      }
+
       if (error instanceof UserFacingError) {
         throw appendDebugDetails(error, buildStreamDebugDetails(diagnostics));
       }
@@ -579,6 +592,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       ]);
     } finally {
       idleTimeout.clear();
+      unlinkAbort();
     }
   }
 
@@ -603,6 +617,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       let buffer = "";
       let content = "";
       let seenLength = 0;
+      let abortedBySignal = false;
       const toolCallState = createToolCallAccumulator();
       const idleTimeout = createIdleTimeout(request.timeoutMs, () => {
         xhr.abort();
@@ -615,6 +630,10 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "流式通道", value: "XMLHttpRequest" },
           ...buildStreamDebugDetails(diagnostics)
         ]));
+      });
+      const unlinkAbort = linkAbortSignal(request.signal, () => {
+        abortedBySignal = true;
+        xhr.abort();
       });
 
       xhr.open("POST", url, true);
@@ -636,6 +655,7 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       xhr.onload = () => {
         idleTimeout.clear();
+        unlinkAbort();
 
         if (xhr.status < 200 || xhr.status >= 300) {
           reject(new UserFacingError(`请求失败：${xhr.responseText || `HTTP ${xhr.status}`}`, [
@@ -667,6 +687,7 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       xhr.onerror = () => {
         idleTimeout.clear();
+        unlinkAbort();
         reject(new UserFacingError("XMLHttpRequest 流式连接失败。", [
           { label: "请求方法", value: "POST" },
           { label: "请求 URL", value: url },
@@ -681,6 +702,12 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       xhr.onabort = () => {
         idleTimeout.clear();
+        unlinkAbort();
+        if (abortedBySignal) {
+          reject(new UserFacingError("请求已取消。"));
+          return;
+        }
+
         reject(new UserFacingError("XMLHttpRequest 流式连接已中止。", [
           { label: "请求方法", value: "POST" },
           { label: "请求 URL", value: url },
@@ -716,6 +743,7 @@ export class OpenAICompatibleProvider implements AiProvider {
       let buffer = "";
       let content = "";
       let seenLength = 0;
+      let abortedBySignal = false;
       const idleTimeout = createIdleTimeout(request.timeoutMs, () => {
         xhr.abort();
         reject(new UserFacingError(buildIdleTimeoutMessage(request.timeoutMs, diagnostics), [
@@ -727,6 +755,10 @@ export class OpenAICompatibleProvider implements AiProvider {
           { label: "流式通道", value: "XMLHttpRequest" },
           ...buildStreamDebugDetails(diagnostics)
         ]));
+      });
+      const unlinkAbort = linkAbortSignal(request.signal, () => {
+        abortedBySignal = true;
+        xhr.abort();
       });
 
       xhr.open("POST", url, true);
@@ -748,6 +780,7 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       xhr.onload = () => {
         idleTimeout.clear();
+        unlinkAbort();
 
         if (xhr.status < 200 || xhr.status >= 300) {
           reject(new UserFacingError(`请求失败：${xhr.responseText || `HTTP ${xhr.status}`}`, [
@@ -778,6 +811,7 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       xhr.onerror = () => {
         idleTimeout.clear();
+        unlinkAbort();
         reject(new UserFacingError("XMLHttpRequest 流式连接失败。", [
           { label: "请求方法", value: "POST" },
           { label: "请求 URL", value: url },
@@ -792,6 +826,12 @@ export class OpenAICompatibleProvider implements AiProvider {
 
       xhr.onabort = () => {
         idleTimeout.clear();
+        unlinkAbort();
+        if (abortedBySignal) {
+          reject(new UserFacingError("请求已取消。"));
+          return;
+        }
+
         reject(new UserFacingError("XMLHttpRequest 流式连接已中止。", [
           { label: "请求方法", value: "POST" },
           { label: "请求 URL", value: url },
@@ -1197,6 +1237,24 @@ function summarizeRawResponseHeaders(rawHeaders: string): string {
 
 function looksLikeJsonResponse(contentType: string): boolean {
   return contentType.toLowerCase().includes("application/json");
+}
+
+function linkAbortSignal(signal: AbortSignal | undefined, onAbort: () => void): () => void {
+  if (!signal) {
+    return () => undefined;
+  }
+
+  if (signal.aborted) {
+    onAbort();
+    return () => undefined;
+  }
+
+  signal.addEventListener("abort", onAbort, { once: true });
+  return () => signal.removeEventListener("abort", onAbort);
+}
+
+function isAbortError(error: unknown): boolean {
+  return typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "AbortError";
 }
 
 function looksLikeCorsFailure(diagnostics: StreamDiagnostics, errorMessage: string): boolean {

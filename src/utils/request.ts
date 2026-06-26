@@ -9,6 +9,7 @@ export interface JsonRequestOptions {
   headers?: Record<string, string>;
   body?: unknown;
   timeoutMs: number;
+  signal?: AbortSignal;
 }
 
 export interface JsonResponse<T> {
@@ -19,12 +20,26 @@ export interface JsonResponse<T> {
 
 export async function requestJson<T>(options: JsonRequestOptions): Promise<JsonResponse<T>> {
   let timeoutId: number | undefined;
+  let abortHandler: (() => void) | undefined;
 
   const timeout = new Promise<never>((_, reject) => {
     timeoutId = window.setTimeout(
       () => reject(new UserFacingError("请求超时，请检查网络或调大超时时间。")),
       options.timeoutMs
     );
+  });
+  const abort = new Promise<never>((_, reject) => {
+    if (!options.signal) {
+      return;
+    }
+
+    if (options.signal.aborted) {
+      reject(new UserFacingError("请求已取消。"));
+      return;
+    }
+
+    abortHandler = () => reject(new UserFacingError("请求已取消。"));
+    options.signal.addEventListener("abort", abortHandler, { once: true });
   });
 
   try {
@@ -36,7 +51,7 @@ export async function requestJson<T>(options: JsonRequestOptions): Promise<JsonR
       throw: false
     });
 
-    const response = await Promise.race([request, timeout]);
+    const response = await Promise.race([request, timeout, abort]);
 
     return {
       status: response.status,
@@ -48,6 +63,10 @@ export async function requestJson<T>(options: JsonRequestOptions): Promise<JsonR
   } finally {
     if (timeoutId !== undefined) {
       window.clearTimeout(timeoutId);
+    }
+
+    if (options.signal && abortHandler) {
+      options.signal.removeEventListener("abort", abortHandler);
     }
   }
 }
