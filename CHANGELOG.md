@@ -22,6 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added `TODO.md` to track upcoming mobile UX, streaming, context, settings, and code-health optimization items.
+
 ## [0.1.25] - 2026-06-26
 
 ### Added
