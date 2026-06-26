@@ -29,7 +29,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
     for (const provider of this.mobilePlugin.settings.providers) {
       const details = containerEl.createEl("details", { cls: "mobile-ai-provider-settings" });
       details.open = provider.id === this.mobilePlugin.settings.defaultProviderId;
-      details.createEl("summary", {
+      const summaryEl = details.createEl("summary", {
         text: `${provider.name || "OpenAI Compatible"}${provider.id === this.mobilePlugin.settings.defaultProviderId ? " · 默认" : ""}`
       });
 
@@ -41,7 +41,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
           .onChange(async (value) => {
             provider.name = value.trim() || "OpenAI Compatible";
             await this.mobilePlugin.saveSettings();
-            this.display();
+            summaryEl.setText(`${provider.name}${provider.id === this.mobilePlugin.settings.defaultProviderId ? " · 默认" : ""}`);
           }));
 
       new Setting(details)
@@ -191,7 +191,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
             await this.mobilePlugin.saveSettings();
           }));
 
-      new Setting(details)
+      const actionSetting = new Setting(details)
         .setName("操作")
         .addButton((button) => button
           .setButtonText("设为默认")
@@ -250,6 +250,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
           .onClick(async () => {
             await this.deleteProvider(provider);
           }));
+      actionSetting.settingEl.addClass("mobile-ai-provider-actions");
     }
 
     new Setting(containerEl)
