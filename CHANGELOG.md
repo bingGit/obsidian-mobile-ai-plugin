@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.25] - 2026-06-26
+
 ### Added
 - Added a settings action to clear all saved chat history without touching provider/model/API key settings.
 - Added a chat header action to clear only the current chat page history.
@@ -109,7 +111,8 @@ Without those changes, the model still can't write files even with v0.1.18.
 - Chat message vertical spacing tightened.
 - Chat content is now contained inside the panel so it no longer overflows horizontally on mobile.
 
-[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.24...HEAD
+[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.25...HEAD
+[0.1.25]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.23...v0.1.24
 [0.1.23]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.22...v0.1.23
 [0.1.22]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.21...v0.1.22
