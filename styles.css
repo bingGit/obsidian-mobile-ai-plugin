@@ -481,6 +481,26 @@
   border-radius: 8px;
 }
 
+.mobile-ai-models-setting .setting-item-control {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-width: 0;
+}
+
+.mobile-ai-models-setting .setting-item-control textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  width: 100%;
+}
+
+.mobile-ai-models-setting .setting-item-control button {
+  flex: 0 0 auto;
+  align-self: center;
+  min-width: 52px;
+  padding-inline: 10px;
+}
+
 .mobile-ai-provider-actions {
   align-items: flex-start;
 }

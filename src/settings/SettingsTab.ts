@@ -132,7 +132,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
             await this.mobilePlugin.saveSettings();
           }));
 
-      new Setting(details)
+      const modelsSetting = new Setting(details)
         .setName("常用模型")
         .setDesc("用英文逗号分隔，聊天界面会作为快捷选项展示。")
         .addTextArea((text) => {
@@ -159,6 +159,7 @@ export class MobileAiSettingsTab extends PluginSettingTab {
             await this.mobilePlugin.saveSettings();
             this.display();
           }));
+      modelsSetting.settingEl.addClass("mobile-ai-models-setting");
 
       new Setting(details)
         .setName("Temperature")
