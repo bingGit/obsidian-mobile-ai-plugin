@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Added a settings action to clear all saved chat history without touching provider/model/API key settings.
+- Added a chat header action to clear only the current chat page history.
+
 ### Changed
 - Tightened assistant Markdown spacing for mobile reading density while preserving line breaks during active streaming.
 - User messages now have a subtle tinted bubble and border so sent content is easier to distinguish from AI replies in the chat flow.

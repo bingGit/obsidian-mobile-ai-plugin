@@ -1,6 +1,7 @@
 import { Notice, PluginSettingTab, Setting } from "obsidian";
 
 import type MobileAiCompanionPlugin from "../main";
+import { VIEW_TYPE_CHAT } from "../chat/ChatView";
 import { toDebugMessage } from "../utils/errors";
 import { createProviderConfig, type ProviderConfig } from "./types";
 
@@ -316,6 +317,33 @@ export class MobileAiSettingsTab extends PluginSettingTab {
           this.mobilePlugin.settings.historyEnabled = value;
           await this.mobilePlugin.saveSettings();
         }));
+
+    new Setting(containerEl)
+      .setName("清空历史消息")
+      .setDesc("清空插件保存的全部会话历史；不会删除 Provider、模型或 API Key 设置。")
+      .addButton((button) => button
+        .setButtonText("清空")
+        .setWarning()
+        .onClick(async () => {
+          if (!window.confirm("确定清空全部会话历史吗？此操作不会删除 Provider 设置。")) {
+            return;
+          }
+
+          await this.mobilePlugin.chatStore.clear();
+          await this.clearOpenChatViews();
+          new Notice("已清空全部会话历史。");
+        }));
+  }
+
+  private async clearOpenChatViews(): Promise<void> {
+    const leaves = this.mobilePlugin.app.workspace.getLeavesOfType(VIEW_TYPE_CHAT);
+
+    for (const leaf of leaves) {
+      const view = leaf.view as unknown as {
+        clearCurrentSessionMessages?: (options?: { confirm?: boolean; persist?: boolean; notice?: boolean }) => Promise<void>;
+      };
+      await view.clearCurrentSessionMessages?.({ confirm: false, persist: false, notice: false });
+    }
   }
 
   private async deleteProvider(provider: ProviderConfig): Promise<void> {

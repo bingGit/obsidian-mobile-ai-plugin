@@ -113,6 +113,41 @@ export class ChatView extends ItemView {
     this.addAttachment(attachment);
   }
 
+  async clearCurrentSessionMessages(options: { confirm?: boolean; persist?: boolean; notice?: boolean } = {}): Promise<void> {
+    const { confirm = true, persist = true, notice = true } = options;
+    const session = this.ensureSession();
+
+    if (!session.messages.length && !this.attachments.length) {
+      if (notice) {
+        new Notice("当前聊天页没有可清空的历史消息。");
+      }
+      return;
+    }
+
+    if (confirm && !window.confirm("确定清空当前聊天页的历史消息吗？")) {
+      return;
+    }
+
+    this.controller.cancel();
+    this.sending = false;
+    this.stopRequestStatusTimer();
+    this.statusText = "";
+    this.streamingMessageId = null;
+    this.streamingContentEl = null;
+    this.attachments = [];
+    session.messages = [];
+
+    if (persist) {
+      await this.plugin.chatStore.saveSession(session);
+    }
+
+    this.render();
+
+    if (notice) {
+      new Notice("已清空当前聊天页历史消息。");
+    }
+  }
+
   private ensureSession(): ChatSession {
     if (this.session) {
       this.hydrateSession(this.session);
@@ -325,6 +360,19 @@ export class ChatView extends ItemView {
       this.session = this.plugin.chatStore.createSession(provider.id, provider.defaultModel);
       this.attachments = [];
       this.render();
+    });
+
+    const clearButton = actionsEl.createEl("button", {
+      cls: "mobile-ai-icon-button",
+      attr: {
+        "aria-label": "清空当前聊天",
+        title: "清空当前聊天"
+      }
+    });
+    setIcon(clearButton, "trash-2");
+    clearButton.disabled = this.sending || session.messages.length === 0;
+    clearButton.addEventListener("click", () => {
+      void this.clearCurrentSessionMessages();
     });
 
     const fullscreenButton = actionsEl.createEl("button", {
