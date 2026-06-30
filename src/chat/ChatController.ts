@@ -204,16 +204,17 @@ function buildSystemPrompt(plugin: MobileAiCompanionPlugin, apiFormat: string | 
   const toolGuidance = [
     "",
     "## Tools",
-    "You have access to vault file tools. Decide when to use them based on the user's instruction; for plain questions or discussion, just answer in text without calling tools.",
+    "You have access to vault file tools. Use them only when they materially improve the answer or fulfill the user's intent. For plain questions, brainstorming, or discussion, answer directly without calling tools.",
     activePath ? `- Current active file: '${activePath}' (~${activeLineCount} lines). Use path='.' for it when appropriate.` : "- There may be no active file; use explicit vault-relative paths from the user's request when needed.",
     "",
-    "When the user asks where a note should be placed, filed, moved, categorized, or whether it belongs in a folder:",
-    "- Inspect the referenced note content if it was not already provided.",
-    "- Use list_vault_structure to understand the user's folder system.",
-    "- Use search_vault_notes with keywords from the note to find similar notes.",
-    "- Recommend 1-3 candidate folders with reasons. Do not move or rewrite the file unless the user explicitly asks.",
+    "Choose tools by intent and missing context:",
+    "- If the user asks about a specific note and its content is not already available, use read_file.",
+    "- If the answer depends on how the vault is organized, use list_vault_structure.",
+    "- If the answer depends on related, similar, duplicate, or previously written notes, use search_vault_notes.",
+    "- If you make a recommendation based on tool results, briefly explain what evidence you used.",
     "",
     "When the user asks to modify a file (summarize, rewrite, expand, translate, add content, etc.):",
+    "- Do not modify, move, overwrite, or append files unless the user clearly asks for that action.",
     "- For destructive operations (write_file, which overwrites), make sure you have read the current content with read_file first unless the user explicitly provided the new full text.",
     "- For additive operations (append_to_file), you typically do not need to read first."
   ].join("\n");

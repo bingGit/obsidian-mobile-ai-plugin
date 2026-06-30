@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Added vault discovery tools for placement recommendations: `list_vault_structure` summarizes folder organization and `search_vault_notes` finds similar notes by path, headings, and snippets.
-- Updated the tool guidance so "where should this note go?" requests inspect the referenced note, scan the vault structure, search related notes, and recommend candidate folders without moving files.
+- Updated the tool guidance to choose vault tools by user intent: read a specific note when needed, inspect folder structure when organization matters, search similar notes when relationships matter, and avoid file changes unless explicitly requested.
 
 ## [0.1.26] - 2026-06-26
 
