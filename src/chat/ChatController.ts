@@ -199,21 +199,24 @@ function buildSystemPrompt(plugin: MobileAiCompanionPlugin, apiFormat: string | 
   const activePath = active?.file?.path;
   const activeLineCount = active?.editor ? active.editor.lineCount() : 0;
 
-  const base = "You are an AI assistant inside Obsidian mobile. Answer clearly in the user's language. Only use vault context that is explicitly provided.";
+  const base = "You are an AI assistant inside Obsidian mobile. Answer clearly in the user's language. Only use vault context that is explicitly provided or explicitly requested through available vault tools.";
 
-  const toolGuidance = activePath
-    ? [
-        "",
-        "## Tools",
-        "You have access to vault file tools. Decide when to use them based on the user's instruction; for plain questions or discussion, just answer in text without calling tools.",
-        "",
-        "When the user asks to modify a file (summarize, rewrite, expand, translate, add content, etc.):",
-        "- Use path='.' for the currently active file (this is the file the user is editing right now).",
-        `- Current active file: '${activePath}' (~${activeLineCount} lines).`,
-        "- For destructive operations (write_file, which overwrites), make sure you have read the current content with read_file first unless the user explicitly provided the new full text.",
-        "- For additive operations (append_to_file), you typically do not need to read first."
-      ].join("\n")
-    : "";
+  const toolGuidance = [
+    "",
+    "## Tools",
+    "You have access to vault file tools. Decide when to use them based on the user's instruction; for plain questions or discussion, just answer in text without calling tools.",
+    activePath ? `- Current active file: '${activePath}' (~${activeLineCount} lines). Use path='.' for it when appropriate.` : "- There may be no active file; use explicit vault-relative paths from the user's request when needed.",
+    "",
+    "When the user asks where a note should be placed, filed, moved, categorized, or whether it belongs in a folder:",
+    "- Inspect the referenced note content if it was not already provided.",
+    "- Use list_vault_structure to understand the user's folder system.",
+    "- Use search_vault_notes with keywords from the note to find similar notes.",
+    "- Recommend 1-3 candidate folders with reasons. Do not move or rewrite the file unless the user explicitly asks.",
+    "",
+    "When the user asks to modify a file (summarize, rewrite, expand, translate, add content, etc.):",
+    "- For destructive operations (write_file, which overwrites), make sure you have read the current content with read_file first unless the user explicitly provided the new full text.",
+    "- For additive operations (append_to_file), you typically do not need to read first."
+  ].join("\n");
 
   if (apiFormat === "responses") {
     return base + toolGuidance + "\n\nNote: this provider's tool-calling support may differ; if tools do not work, just answer the user in text describing what you would do.";

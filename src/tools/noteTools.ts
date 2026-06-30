@@ -50,6 +50,80 @@ export const NOTE_TOOLS: Array<Tool & { execute: ToolExecutor }> = [
   {
     type: "function",
     function: {
+      name: "list_vault_structure",
+      description:
+        "Inspect the markdown folder structure of the vault. Use this when the user asks where a note should be filed, how the vault is organized, or which folder may fit a note. Returns folder counts and sample note paths only; it does not read every note.",
+      parameters: {
+        type: "object",
+        properties: {
+          root: {
+            type: "string",
+            description:
+              "Optional folder path relative to the vault root. Empty means scan the whole vault."
+          },
+          max_depth: {
+            type: "number",
+            description:
+              "How many folder levels to include from the root. Default 3, maximum 6."
+          },
+          include_files: {
+            type: "boolean",
+            description:
+              "Whether to include a few sample markdown file paths for each folder. Default true."
+          },
+          max_entries: {
+            type: "number",
+            description:
+              "Maximum number of folder entries to return. Default 120, maximum 300."
+          }
+        }
+      }
+    },
+    execute: executeListVaultStructure
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_vault_notes",
+      description:
+        "Search markdown notes by path, title, headings, and optional content snippets. Use this to find notes similar to a referenced file before recommending a destination folder.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Search terms, usually keywords extracted from the user's note or request."
+          },
+          root: {
+            type: "string",
+            description:
+              "Optional folder path to limit the search. Empty means the whole vault."
+          },
+          limit: {
+            type: "number",
+            description:
+              "Maximum result count. Default 8, maximum 20."
+          },
+          search_content: {
+            type: "boolean",
+            description:
+              "Whether to inspect note content snippets in addition to paths/headings. Default true."
+          },
+          max_files: {
+            type: "number",
+            description:
+              "Maximum number of markdown files to inspect when search_content is true. Default 250, maximum 500."
+          }
+        },
+        required: ["query"]
+      }
+    },
+    execute: executeSearchVaultNotes
+  },
+  {
+    type: "function",
+    function: {
       name: "write_file",
       description:
         "Overwrite a file in the vault with new content. Destructive: replaces the entire file. Prefer this only when the user explicitly asks to rewrite, replace, or overwrite a file. To add to a file, use append_to_file instead.",
@@ -175,6 +249,300 @@ function resolveTargetFile(app: App, path: string): TFile | null {
 
 function describeFile(file: TFile): string {
   return file.path;
+}
+
+function normalizeVaultPath(path: string): string {
+  return path.trim().replace(/^\/+/, "").replace(/\/+$/, "");
+}
+
+function getMarkdownFilesUnder(app: App, root: string): TFile[] {
+  const normalizedRoot = normalizeVaultPath(root);
+  const prefix = normalizedRoot ? `${normalizedRoot}/` : "";
+
+  return app.vault
+    .getMarkdownFiles()
+    .filter((file) => !prefix || file.path.startsWith(prefix))
+    .sort((a, b) => a.path.localeCompare(b.path));
+}
+
+function getFolderPath(path: string): string {
+  const slash = path.lastIndexOf("/");
+  return slash === -1 ? "" : path.slice(0, slash);
+}
+
+function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
+  const numeric = typeof value === "number" && Number.isFinite(value) ? value : fallback;
+  return Math.min(max, Math.max(min, Math.floor(numeric)));
+}
+
+function boolArg(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback;
+}
+
+interface FolderSummary {
+  path: string;
+  directFiles: number;
+  totalFiles: number;
+  samples: string[];
+}
+
+function ensureFolderSummary(summaries: Map<string, FolderSummary>, path: string): FolderSummary {
+  const existing = summaries.get(path);
+
+  if (existing) {
+    return existing;
+  }
+
+  const created: FolderSummary = {
+    path,
+    directFiles: 0,
+    totalFiles: 0,
+    samples: []
+  };
+  summaries.set(path, created);
+  return created;
+}
+
+function relativeFolderDepth(folderPath: string, root: string): number {
+  const normalizedRoot = normalizeVaultPath(root);
+  const relative = normalizedRoot && folderPath.startsWith(`${normalizedRoot}/`)
+    ? folderPath.slice(normalizedRoot.length + 1)
+    : folderPath;
+
+  if (!relative) {
+    return 0;
+  }
+
+  return relative.split("/").length;
+}
+
+async function executeListVaultStructure(
+  args: Record<string, unknown>,
+  ctx: ToolExecutionContext
+): Promise<ToolExecutionResult> {
+  const root = typeof args.root === "string" ? normalizeVaultPath(args.root) : "";
+  const maxDepth = clampNumber(args.max_depth, 3, 1, 6);
+  const maxEntries = clampNumber(args.max_entries, 120, 20, 300);
+  const includeFiles = boolArg(args.include_files, true);
+  const files = getMarkdownFilesUnder(ctx.app, root);
+
+  if (root && files.length === 0) {
+    return {
+      ok: false,
+      resultText: `Error: no markdown files found under folder '${root}'.`,
+      summary: `list_vault_structure ${root} - empty`
+    };
+  }
+
+  const summaries = new Map<string, FolderSummary>();
+  ensureFolderSummary(summaries, root);
+
+  for (const file of files) {
+    const folderPath = getFolderPath(file.path);
+    const directSummary = ensureFolderSummary(summaries, folderPath);
+    directSummary.directFiles += 1;
+
+    if (directSummary.samples.length < 4) {
+      directSummary.samples.push(file.path);
+    }
+
+    const parts = folderPath ? folderPath.split("/") : [];
+    for (let index = 0; index <= parts.length; index++) {
+      const ancestor = parts.slice(0, index).join("/");
+
+      if (root && ancestor && ancestor !== root && !ancestor.startsWith(`${root}/`)) {
+        continue;
+      }
+
+      const summary = ensureFolderSummary(summaries, ancestor);
+      summary.totalFiles += 1;
+    }
+  }
+
+  const entries = [...summaries.values()]
+    .filter((summary) => relativeFolderDepth(summary.path, root) <= maxDepth)
+    .sort((a, b) => a.path.localeCompare(b.path))
+    .slice(0, maxEntries);
+
+  const lines = [
+    "Vault markdown structure",
+    `Root: ${root || "(vault root)"}`,
+    `Markdown files under root: ${files.length}`,
+    `Returned folders: ${entries.length}${summaries.size > entries.length ? ` of ${summaries.size}` : ""}`,
+    "",
+    "Folders:"
+  ];
+
+  for (const entry of entries) {
+    lines.push(`- ${entry.path || "(vault root)"} (direct md: ${entry.directFiles}, total md: ${entry.totalFiles})`);
+
+    if (includeFiles && entry.samples.length) {
+      lines.push(`  samples: ${entry.samples.join("; ")}`);
+    }
+  }
+
+  return {
+    ok: true,
+    resultText: lines.join("\n"),
+    summary: `list_vault_structure ${root || "(root)"} (${entries.length} folders)`
+  };
+}
+
+interface SearchResult {
+  file: TFile;
+  score: number;
+  title: string;
+  headings: string[];
+  snippet: string;
+}
+
+function getSearchTerms(query: string): string[] {
+  const normalized = query
+    .toLowerCase()
+    .replace(/[，。、“”‘’：；！？（）【】《》]/g, " ")
+    .replace(/[_\-/#|]+/g, " ");
+  const terms = normalized
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2);
+
+  if (normalized.trim().length >= 2) {
+    terms.unshift(normalized.trim());
+  }
+
+  return [...new Set(terms)].slice(0, 12);
+}
+
+function scoreText(value: string, terms: string[], weight: number): number {
+  const normalized = value.toLowerCase();
+  let score = 0;
+
+  for (const term of terms) {
+    if (normalized.includes(term)) {
+      score += weight;
+    }
+  }
+
+  return score;
+}
+
+function extractTitle(content: string, fallback: string): string {
+  const heading = content.match(/^#\s+(.+)$/m);
+  return heading?.[1]?.trim() || fallback;
+}
+
+function extractHeadings(content: string): string[] {
+  return content
+    .split("\n")
+    .filter((line) => /^#{1,3}\s+/.test(line))
+    .slice(0, 5)
+    .map((line) => line.replace(/^#{1,3}\s+/, "").trim());
+}
+
+function extractSnippet(content: string, terms: string[]): string {
+  const normalized = content.toLowerCase();
+  const firstMatch = terms
+    .map((term) => normalized.indexOf(term))
+    .filter((index) => index >= 0)
+    .sort((a, b) => a - b)[0];
+
+  const start = firstMatch === undefined ? 0 : Math.max(0, firstMatch - 90);
+  const snippet = content
+    .slice(start, start + 240)
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return snippet;
+}
+
+async function executeSearchVaultNotes(
+  args: Record<string, unknown>,
+  ctx: ToolExecutionContext
+): Promise<ToolExecutionResult> {
+  const query = typeof args.query === "string" ? args.query.trim() : "";
+
+  if (!query) {
+    return {
+      ok: false,
+      resultText: "Error: query is required.",
+      summary: "search_vault_notes - empty query"
+    };
+  }
+
+  const root = typeof args.root === "string" ? normalizeVaultPath(args.root) : "";
+  const limit = clampNumber(args.limit, 8, 1, 20);
+  const maxFiles = clampNumber(args.max_files, 250, 20, 500);
+  const searchContent = boolArg(args.search_content, true);
+  const terms = getSearchTerms(query);
+  const files = getMarkdownFilesUnder(ctx.app, root);
+  const candidates = files
+    .map((file) => ({
+      file,
+      pathScore: scoreText(file.path, terms, 18) + scoreText(file.basename, terms, 30)
+    }))
+    .sort((a, b) => b.pathScore - a.pathScore || a.file.path.localeCompare(b.file.path))
+    .slice(0, searchContent ? maxFiles : files.length);
+  const results: SearchResult[] = [];
+
+  for (const candidate of candidates) {
+    let content = "";
+    let title = candidate.file.basename;
+    let headings: string[] = [];
+    let snippet = "";
+    let contentScore = 0;
+
+    if (searchContent) {
+      content = await ctx.app.vault.cachedRead(candidate.file);
+      title = extractTitle(content, candidate.file.basename);
+      headings = extractHeadings(content);
+      contentScore += scoreText(title, terms, 32);
+      contentScore += scoreText(headings.join("\n"), terms, 24);
+      contentScore += scoreText(content.slice(0, 8000), terms, 10);
+      snippet = extractSnippet(content, terms);
+    }
+
+    const score = candidate.pathScore + contentScore;
+
+    if (score > 0) {
+      results.push({
+        file: candidate.file,
+        score,
+        title,
+        headings,
+        snippet
+      });
+    }
+  }
+
+  results.sort((a, b) => b.score - a.score || a.file.path.localeCompare(b.file.path));
+  const limited = results.slice(0, limit);
+  const lines = [
+    "Vault note search",
+    `Query: ${query}`,
+    `Root: ${root || "(vault root)"}`,
+    `Markdown files considered: ${candidates.length} of ${files.length}`,
+    `Results: ${limited.length}`,
+    ""
+  ];
+
+  for (const result of limited) {
+    lines.push(`- ${result.file.path} (score: ${result.score})`);
+    lines.push(`  title: ${result.title}`);
+
+    if (result.headings.length) {
+      lines.push(`  headings: ${result.headings.join(" | ")}`);
+    }
+
+    if (result.snippet) {
+      lines.push(`  snippet: ${result.snippet}`);
+    }
+  }
+
+  return {
+    ok: true,
+    resultText: lines.join("\n"),
+    summary: `search_vault_notes "${query.slice(0, 24)}" (${limited.length} results)`
+  };
 }
 
 async function executeReadFile(

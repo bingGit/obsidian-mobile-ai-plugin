@@ -54,6 +54,7 @@ Keep items concrete enough that we can pick one, implement it, test it, and mark
 
 ## Done
 
+- [x] Add vault structure and similar-note search tools so AI can recommend where a referenced note should be filed.
 - [x] Make stop generation cancel the active request path and avoid turning user cancellation into an AI error reply.
 - [x] Move current-chat clear and fullscreen into a compact header "more" menu.
 - [x] Make current-chat clear create a fresh empty session while preserving provider/model choice.
