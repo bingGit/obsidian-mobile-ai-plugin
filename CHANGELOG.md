@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.27] - 2026-06-30
+
 ### Added
 - Added vault discovery tools for placement recommendations: `list_vault_structure` summarizes folder organization and `search_vault_notes` finds similar notes by path, headings, and snippets.
 - Updated the tool guidance to choose vault tools by user intent: read a specific note when needed, inspect folder structure when organization matters, search similar notes when relationships matter, and avoid file changes unless explicitly requested.
@@ -129,7 +131,8 @@ Without those changes, the model still can't write files even with v0.1.18.
 - Chat message vertical spacing tightened.
 - Chat content is now contained inside the panel so it no longer overflows horizontally on mobile.
 
-[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.26...HEAD
+[Unreleased]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.27...HEAD
+[0.1.27]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.26...v0.1.27
 [0.1.26]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.25...v0.1.26
 [0.1.25]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.24...v0.1.25
 [0.1.24]: https://github.com/bingGit/obsidian-mobile-ai-plugin/compare/v0.1.23...v0.1.24
