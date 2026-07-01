@@ -1,6 +1,6 @@
 # Mobile AI Companion
 
-Mobile AI Companion is a mobile-first Obsidian plugin prototype for chatting with OpenAI-compatible model APIs inside a vault.
+Mobile AI Companion is a mobile-first Obsidian plugin for chatting with OpenAI-compatible model APIs inside a vault.
 
 The plugin is designed around the requirements in [docs/obsidian-mobile-ai-plugin-requirements.md](docs/obsidian-mobile-ai-plugin-requirements.md):
 

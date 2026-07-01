@@ -1,11 +1,11 @@
 {
   "id": "mobile-ai-companion",
   "name": "Mobile AI Companion",
-  "version": "0.1.27",
+  "version": "0.1.28",
   "minAppVersion": "1.7.2",
   "description": "Use OpenAI-compatible model APIs with Obsidian mobile notes, selections, and @file context.",
-  "author": "",
-  "authorUrl": "",
+  "author": "bingGit",
+  "authorUrl": "https://github.com/bingGit",
   "fundingUrl": "",
   "isDesktopOnly": false
 }
